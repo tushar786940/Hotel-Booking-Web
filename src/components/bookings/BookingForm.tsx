@@ -26,7 +26,7 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const nights = calculateNights(checkIn, checkOut);
-  const subtotal = roomType.base_price * nights;
+  const subtotal = roomType.price_per_night * nights;
   const taxes = subtotal * 0.12; // 12% tax
   const total = subtotal + taxes;
 
@@ -132,7 +132,7 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
         <div className="border-t border-secondary-100 pt-4 space-y-2">
           <div className="flex items-center justify-between text-sm">
             <span className="text-secondary-500">
-              {formatCurrency(roomType.base_price)} × {nights} {nights === 1 ? 'night' : 'nights'}
+              {formatCurrency(roomType.price_per_night)} × {nights} {nights === 1 ? 'night' : 'nights'}
             </span>
             <span className="text-secondary-700">{formatCurrency(subtotal)}</span>
           </div>
