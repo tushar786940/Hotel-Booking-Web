@@ -19,7 +19,7 @@ interface RoomCardProps {
 export default function RoomCard({ roomType, checkIn, checkOut, nights = 1, onBook }: RoomCardProps) {
   const mainImage = roomType.images?.[0];
   const imageUrl = mainImage ? getImageUrl(mainImage) : '/images/placeholder-room.jpg';
-  const totalPrice = roomType.base_price * nights;
+  const totalPrice = roomType.price_per_night * nights;
   const isAvailable = roomType.available_rooms === undefined || roomType.available_rooms > 0;
 
   return (
@@ -92,7 +92,7 @@ export default function RoomCard({ roomType, checkIn, checkOut, nights = 1, onBo
             <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-start gap-2 min-w-[150px]">
               <div className="text-right">
                 <p className="text-2xl font-bold text-secondary-900">
-                  {formatCurrency(roomType.base_price)}
+                  {formatCurrency(roomType.price_per_night)}
                 </p>
                 <p className="text-xs text-secondary-500">per night</p>
                 {nights > 1 && (

@@ -42,7 +42,7 @@ export interface RoomType {
   name: string;
   slug: string;
   description: string;
-  base_price: number;
+  price_per_night: number;
   max_guests: number;
   bed_type: string;
   room_size?: number;
