@@ -16,6 +16,9 @@ const PNG_1X1 = Buffer.from(
   'base64',
 );
 
+/** 'missing' simulates a backend with no public/storage symlink. */
+const STORAGE_MODE = process.env.MOCK_STORAGE || 'on';
+
 const PORT = Number(process.env.PORT || 8000);
 const HOST = process.env.HOST || '0.0.0.0';
 const ORIGIN = process.env.MOCK_PUBLIC_URL || `http://localhost:${PORT}`;
@@ -963,8 +966,23 @@ const server = http.createServer((req, res) => {
    * `/storage/:path*` rewrite has something real to proxy to. Any path under
    * /storage returns a valid 1×1 PNG; this is about exercising the transport,
    * not about the pixels.
+   *
+   * Set MOCK_STORAGE=missing to reproduce an API where `php artisan
+   * storage:link` was never run (or the file is on a non-public disk): Laravel
+   * answers with its HTML 404 page, which next/image reports as
+   * "The requested resource isn't a valid image … received null", because it
+   * sniffs magic bytes and an HTML body matches nothing.
    */
   if (req.method === 'GET' && pathname.startsWith('/storage/')) {
+    if (STORAGE_MODE === 'missing') {
+      console.log(`GET ${pathname} → 404 (storage stub: link missing)`);
+      res.writeHead(404, { 'Content-Type': 'text/html; charset=UTF-8' });
+      return res.end(
+        '<!DOCTYPE html><html><head><title>404 Not Found</title></head>' +
+          '<body><h1>404</h1><p>Not Found</p></body></html>',
+      );
+    }
+
     console.log(`GET ${pathname} → 200 (storage stub)`);
     res.writeHead(200, {
       'Content-Type': 'image/png',

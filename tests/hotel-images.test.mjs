@@ -121,6 +121,15 @@ console.log('\nF. regressions guarded');
   eq(getImageUrl(undefined), PLACEHOLDER_IMAGE, 'undefined gives the placeholder');
   eq(getImageUrl('   '), PLACEHOLDER_IMAGE, 'whitespace gives the placeholder');
   eq(getImageUrl('null'), PLACEHOLDER_IMAGE, 'the literal string "null" gives the placeholder');
+
+  // A bare path is resolved against the storage mount; one that already names
+  // that mount must not be doubled.
+  eq(getImageUrl('hotels/a.jpg'), served('storage/hotels/a.jpg'),
+    'a bare path is resolved against the storage mount');
+  eq(getImageUrl('/storage/hotels/a.jpg'), served('storage/hotels/a.jpg'),
+    'an already-rooted path is not doubled to /storage/storage/...');
+  eq(getImageUrl('storage/hotels/a.jpg'), served('storage/hotels/a.jpg'),
+    'nor is one without the leading slash');
 }
 
 console.log('\nG. same-origin proxying (next/image refuses private IPs)');

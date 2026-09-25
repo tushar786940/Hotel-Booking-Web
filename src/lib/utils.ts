@@ -224,7 +224,15 @@ export function getImageUrl(
     return toProxiedStorageUrl(pathStr);
   }
 
-  return toProxiedStorageUrl(`${STORAGE_BASE_URL}/${pathStr.replace(/^\/+/, '')}`);
+  /*
+   * A relative path is resolved against the storage mount. Strip a leading
+   * slash and a `storage/` segment first, so a value that is already rooted
+   * there ("/storage/hotels/a.jpg") does not come back doubled as
+   * ".../storage/storage/hotels/a.jpg".
+   */
+  const relative = pathStr.replace(/^\/+/, '').replace(/^storage\//i, '');
+
+  return toProxiedStorageUrl(`${STORAGE_BASE_URL}/${relative}`);
 }
 
 /**
