@@ -5,15 +5,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { Hotel, HotelReview, RoomAvailability, RoomType } from '@/types';
 import { hotelsApi, availabilityApi, reviewsApi, isFutureDate } from '@/lib/api';
-import {
-  formatCurrency,
-  formatMaybeDate,
-  calculateNights,
-  generateBookingDates,
-  addDays,
-  AMENITY_ICONS,
-  getHotelMinPrice,
-} from '@/lib/utils';
+import { AMENITY_ICONS, addDays, calculateNights, formatCurrency, formatMaybeDate, generateBookingDates, getHotelMinPrice, guestOptions, parseGuests } from '@/lib/utils';
 import HotelGallery from '@/components/hotels/HotelGallery';
 import RoomCard from '@/components/hotels/RoomCard';
 import BookingForm from '@/components/bookings/BookingForm';
@@ -38,7 +30,7 @@ export default function HotelDetailPage() {
   // Booking state
   const [checkIn, setCheckIn] = useState(searchParams.get('check_in') || defaultCheckIn);
   const [checkOut, setCheckOut] = useState(searchParams.get('check_out') || defaultCheckOut);
-  const [guests, setGuests] = useState(parseInt(searchParams.get('guests') || '2'));
+  const [guests, setGuests] = useState(parseGuests(searchParams.get('guests')));
   const [selectedRoom, setSelectedRoom] = useState<RoomType | null>(null);
   const [showBookingForm, setShowBookingForm] = useState(false);
 
@@ -250,10 +242,10 @@ export default function HotelDetailPage() {
                   <label className="label">Guests</label>
                   <select
                     value={guests}
-                    onChange={(e) => setGuests(parseInt(e.target.value))}
+                    onChange={(e) => setGuests(parseGuests(e.target.value, guests))}
                     className="input-field"
                   >
-                    {[1, 2, 3, 4, 5, 6].map((n) => (
+                    {guestOptions().map((n) => (
                       <option key={n} value={n}>
                         {n} {n === 1 ? 'Guest' : 'Guests'}
                       </option>
@@ -359,6 +351,7 @@ export default function HotelDetailPage() {
                   checkIn={checkIn}
                   checkOut={checkOut}
                   guests={guests}
+                  onGuestsChange={setGuests}
                   onClose={() => setShowBookingForm(false)}
                   onSoldOut={checkAvailability}
                 />

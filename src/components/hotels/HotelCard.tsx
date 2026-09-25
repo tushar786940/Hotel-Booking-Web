@@ -8,18 +8,44 @@ import { formatCurrency, getHotelImage, getHotelMinPrice, cn } from '@/lib/utils
 import StarRating from '@/components/ui/StarRating';
 import { FiMapPin, FiStar } from 'react-icons/fi';
 
+/**
+ * Carry the guest's stay details through to the hotel page.
+ *
+ * Without this the link is a bare /hotels/{slug}: searching for 4 guests and
+ * then opening a hotel silently resets the party size to the default 2, and
+ * the booking form inherits that instead of what was asked for.
+ */
+function buildHotelHref(slug: string, stay?: HotelCardStay): string {
+  const params = new URLSearchParams();
+
+  if (stay?.check_in) params.set('check_in', stay.check_in);
+  if (stay?.check_out) params.set('check_out', stay.check_out);
+  if (stay?.guests) params.set('guests', String(stay.guests));
+
+  const query = params.toString();
+  return query ? `/hotels/${slug}?${query}` : `/hotels/${slug}`;
+}
+
+export interface HotelCardStay {
+  check_in?: string | null;
+  check_out?: string | null;
+  guests?: number | null;
+}
+
 interface HotelCardProps {
   hotel: Hotel;
   className?: string;
+  /** Current search context, forwarded to the hotel page. */
+  stay?: HotelCardStay;
 }
 
-export default function HotelCard({ hotel, className }: HotelCardProps) {
+export default function HotelCard({ hotel, className, stay }: HotelCardProps) {
   const imageUrl = getHotelImage(hotel);
   const minPrice = getHotelMinPrice(hotel);
   const reviewsCount = hotel.reviews_count ?? 0;
 
   return (
-    <Link href={`/hotels/${hotel.slug}`} className={cn('group block', className)}>
+    <Link href={buildHotelHref(hotel.slug, stay)} className={cn('group block', className)}>
       <div className="bg-white rounded-2xl overflow-hidden shadow-card hover:shadow-card-hover transition-all duration-300 h-full flex flex-col">
         {/* Image */}
         <div className="relative h-56 overflow-hidden">

@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FiSearch, FiCalendar, FiUsers, FiMapPin } from 'react-icons/fi';
-import { generateBookingDates } from '@/lib/utils';
+import { generateBookingDates, guestOptions, parseGuests } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 
 interface SearchBarProps {
@@ -28,7 +28,7 @@ export default function SearchBar({
   const [city, setCity] = useState(defaultValues?.city || '');
   const [checkIn, setCheckIn] = useState(defaultValues?.check_in || defaultCheckIn);
   const [checkOut, setCheckOut] = useState(defaultValues?.check_out || defaultCheckOut);
-  const [guests, setGuests] = useState(defaultValues?.guests || 2);
+  const [guests, setGuests] = useState(parseGuests(defaultValues?.guests));
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,7 +36,7 @@ export default function SearchBar({
     if (city) params.set('city', city);
     if (checkIn) params.set('check_in', checkIn);
     if (checkOut) params.set('check_out', checkOut);
-    params.set('guests', guests.toString());
+    params.set('guests', String(parseGuests(guests)));
 
     router.push(`/search?${params.toString()}`);
   };
@@ -119,10 +119,10 @@ export default function SearchBar({
                 <FiUsers className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400" />
                 <select
                   value={guests}
-                  onChange={(e) => setGuests(parseInt(e.target.value))}
+                  onChange={(e) => setGuests(parseGuests(e.target.value, guests))}
                   className="w-full pl-10 pr-4 py-3 bg-secondary-50 border border-secondary-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent appearance-none transition-all"
                 >
-                  {[1, 2, 3, 4, 5, 6].map((n) => (
+                  {guestOptions().map((n) => (
                     <option key={n} value={n}>
                       {n} {n === 1 ? 'Guest' : 'Guests'}
                     </option>
@@ -186,10 +186,10 @@ export default function SearchBar({
         <label className="block text-xs font-medium text-secondary-500 mb-1">Guests</label>
         <select
           value={guests}
-          onChange={(e) => setGuests(parseInt(e.target.value))}
+          onChange={(e) => setGuests(parseGuests(e.target.value, guests))}
           className="w-full px-3 py-2 bg-secondary-50 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
         >
-          {[1, 2, 3, 4, 5, 6].map((n) => (
+          {guestOptions().map((n) => (
             <option key={n} value={n}>{n}</option>
           ))}
         </select>

@@ -4,7 +4,13 @@
 import React from 'react';
 import Image from 'next/image';
 import { RoomType } from '@/types';
-import { calculatePricing, formatCurrency, getImageUrl, getRoomPrice } from '@/lib/utils';
+import {
+  calculatePricing,
+  formatCurrency,
+  getImageUrl,
+  getRoomCapacity,
+  getRoomPrice,
+} from '@/lib/utils';
 import Button from '@/components/ui/Button';
 import { FiUsers, FiCheck, FiHome } from 'react-icons/fi';
 
@@ -24,7 +30,7 @@ export default function RoomCard({ roomType, guests = 1, nights = 1, onBook }: R
 
   const availableCount = roomType.available_rooms;
   const isAvailable = availableCount === undefined || availableCount > 0;
-  const capacity = roomType.capacity || 2;
+  const capacity = getRoomCapacity(roomType);
 
   return (
     <div className="bg-white rounded-2xl border border-secondary-100 overflow-hidden hover:shadow-card transition-shadow">

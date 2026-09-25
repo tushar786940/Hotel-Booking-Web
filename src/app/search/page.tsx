@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Hotel, PaginationMeta, SearchFilters, SortBy, SortOrder } from '@/types';
 import { availabilityApi, canUseAvailabilitySearch } from '@/lib/api';
-import { generateBookingDates, getHotelMinPrice } from '@/lib/utils';
+import { generateBookingDates, getHotelMinPrice, parseGuests } from '@/lib/utils';
 import SearchBar from '@/components/layout/SearchBar';
 import HotelCard from '@/components/hotels/HotelCard';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
@@ -81,7 +81,7 @@ function SearchContent() {
         check_in: searchParams.get('check_in') || undefined,
         check_out: searchParams.get('check_out') || undefined,
         guests: searchParams.get('guests')
-          ? parseInt(searchParams.get('guests')!)
+          ? parseGuests(searchParams.get('guests'))
           : undefined,
         min_price: minPrice ? Number(minPrice) : undefined,
         max_price: maxPrice ? Number(maxPrice) : undefined,
@@ -144,7 +144,7 @@ function SearchContent() {
               city: searchParams.get('city') || '',
               check_in: searchParams.get('check_in') || defaultCheckIn,
               check_out: searchParams.get('check_out') || defaultCheckOut,
-              guests: searchParams.get('guests') ? parseInt(searchParams.get('guests')!) : 2,
+              guests: parseGuests(searchParams.get('guests')),
             }}
           />
         </div>
@@ -278,7 +278,15 @@ function SearchContent() {
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {hotels.map((hotel) => (
-                <HotelCard key={hotel.id} hotel={hotel} />
+                <HotelCard
+                  key={hotel.id}
+                  hotel={hotel}
+                  stay={{
+                    check_in: searchParams.get('check_in'),
+                    check_out: searchParams.get('check_out'),
+                    guests: parseGuests(searchParams.get('guests')),
+                  }}
+                />
               ))}
             </div>
 

@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { SearchFilters, SortBy, SortOrder } from '@/types';
-import { generateBookingDates } from '@/lib/utils';
+import { generateBookingDates, parseGuests } from '@/lib/utils';
 
 /**
  * Keeps the search form in sync with the query string.
@@ -18,7 +18,7 @@ export function useSearch() {
     city: searchParams.get('city') || '',
     check_in: searchParams.get('check_in') || defaultCheckIn,
     check_out: searchParams.get('check_out') || defaultCheckOut,
-    guests: parseInt(searchParams.get('guests') || '2'),
+    guests: parseGuests(searchParams.get('guests')),
     min_price: searchParams.get('min_price') ? Number(searchParams.get('min_price')) : undefined,
     max_price: searchParams.get('max_price') ? Number(searchParams.get('max_price')) : undefined,
     star_rating: searchParams.get('star_rating')

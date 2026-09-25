@@ -10,7 +10,15 @@ import {
   isFutureDate,
   isNoRoomsAvailableError,
 } from '@/lib/api';
-import { calculatePricing, formatCurrency, calculateNights, getRoomPrice } from '@/lib/utils';
+import {
+  calculatePricing,
+  formatCurrency,
+  calculateNights,
+  getRoomPrice,
+  getRoomCapacity,
+  guestOptions,
+  parseGuests,
+} from '@/lib/utils';
 import Button from '@/components/ui/Button';
 import toast from 'react-hot-toast';
 import { FiCalendar, FiUsers, FiCreditCard, FiAlertCircle } from 'react-icons/fi';
@@ -20,7 +28,12 @@ interface BookingFormProps {
   roomType: RoomType;
   checkIn: string;
   checkOut: string;
-  guests?: number;
+  /**
+   * Controlled from the page so this picker and the "check availability"
+   * picker above it can never drift apart.
+   */
+  guests: number;
+  onGuestsChange?: (guests: number) => void;
   onClose?: () => void;
   /**
    * Called when the API rejects the booking because the room type is fully
@@ -35,14 +48,15 @@ export default function BookingForm({
   roomType,
   checkIn,
   checkOut,
-  guests: initialGuests = 1,
+  guests,
+  onGuestsChange,
   onClose,
   onSoldOut,
 }: BookingFormProps) {
   const { isAuthenticated } = useAuth();
   const router = useRouter();
-  const capacity = roomType.capacity || 2;
-  const [guests, setGuests] = useState(Math.min(Math.max(initialGuests, 1), capacity));
+  const capacity = getRoomCapacity(roomType);
+  const exceedsCapacity = guests > capacity;
   const [specialRequests, setSpecialRequests] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,8 +90,10 @@ export default function BookingForm({
       return;
     }
 
-    if (guests > capacity) {
-      setError(`This room sleeps ${capacity}. Choose a larger room type.`);
+    if (exceedsCapacity) {
+      setError(
+        `This room sleeps ${capacity}. Reduce the party size or pick a larger room type.`,
+      );
       return;
     }
 
@@ -89,7 +105,10 @@ export default function BookingForm({
         room_type_id: roomType.id,
         check_in: checkIn,
         check_out: checkOut,
-        guests_count: guests,
+        // parseGuests guarantees a finite 1-10 integer. Without it a NaN here
+        // serialises to null and the API replies "The guests count field is
+        // required.", which reads like a missing field rather than a bad one.
+        guests_count: parseGuests(guests),
         special_requests: specialRequests || undefined,
       });
 
@@ -157,17 +176,28 @@ export default function BookingForm({
             <FiUsers className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400" />
             <select
               value={guests}
-              onChange={(e) => setGuests(parseInt(e.target.value))}
+              onChange={(e) => onGuestsChange?.(parseGuests(e.target.value, guests))}
               className="w-full pl-10 pr-4 py-2.5 bg-secondary-50 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
-              {Array.from({ length: Math.min(capacity, 10) }, (_, i) => i + 1).map((n) => (
-                <option key={n} value={n}>
+              {/* Same options as the picker above; the ones this room cannot
+                  take are shown but disabled, so the mismatch is visible
+                  rather than the list silently being shorter. */}
+              {guestOptions().map((n) => (
+                <option key={n} value={n} disabled={n > capacity}>
                   {n} {n === 1 ? 'Guest' : 'Guests'}
+                  {n > capacity ? ' — over room capacity' : ''}
                 </option>
               ))}
             </select>
           </div>
         </div>
+
+        {exceedsCapacity && (
+          <p className="-mt-2 text-xs font-medium text-amber-600">
+            {roomType.name} sleeps {capacity}. Choose {capacity} or fewer guests, or
+            pick a larger room type.
+          </p>
+        )}
 
         {/* Special Requests */}
         <div>
@@ -230,7 +260,7 @@ export default function BookingForm({
           fullWidth
           size="lg"
           isLoading={isSubmitting}
-          disabled={soldOut}
+          disabled={soldOut || exceedsCapacity}
           leftIcon={<FiCreditCard />}
         >
           {!isAuthenticated

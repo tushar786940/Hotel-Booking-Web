@@ -251,6 +251,54 @@ export function getStatusLabel(status: string): string {
  * `GET /search` requires `check_in` to be AFTER today, so the default range
  * starts tomorrow.
  */
+/**
+ * BookingController@store validates `guests_count` with `min:1|max:10`, so no
+ * picker should ever offer a value the API will reject.
+ */
+export const MAX_GUESTS_PER_BOOKING = 10;
+
+/**
+ * Coerce anything (query string, <select> value, undefined) into a guest count
+ * the API will accept.
+ *
+ * `parseInt` returns NaN for '', 'abc' and 'NaN'. A NaN here is not harmless:
+ * `JSON.stringify({ guests_count: NaN })` produces `{"guests_count":null}`,
+ * and Laravel then answers "The guests count field is required." — an error
+ * message that points nowhere near the real problem.
+ */
+export function parseGuests(value: unknown, fallback = 2): number {
+  const parsed =
+    typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
+
+  if (!Number.isFinite(parsed)) return fallback;
+
+  return Math.min(Math.max(Math.trunc(parsed), 1), MAX_GUESTS_PER_BOOKING);
+}
+
+/** `[1, 2, … n]` for a guest <select>. Always at least one option. */
+export function guestOptions(max: number = MAX_GUESTS_PER_BOOKING): number[] {
+  const limit = Number.isFinite(max)
+    ? Math.min(Math.max(Math.trunc(max), 1), MAX_GUESTS_PER_BOOKING)
+    : MAX_GUESTS_PER_BOOKING;
+
+  return Array.from({ length: limit }, (_, index) => index + 1);
+}
+
+/**
+ * How many guests a room type sleeps.
+ *
+ * When the API omits `capacity` we must not invent a small number — silently
+ * assuming 2 is what made the booking form offer fewer guests than the page
+ * above it. Fall back to the API maximum and let the server decide.
+ */
+export function getRoomCapacity(roomType?: { capacity?: number | null } | null): number {
+  const capacity = Number(roomType?.capacity);
+
+  return Number.isFinite(capacity) && capacity > 0
+    ? Math.min(Math.trunc(capacity), MAX_GUESTS_PER_BOOKING)
+    : MAX_GUESTS_PER_BOOKING;
+}
+
 export function generateBookingDates() {
   const today = new Date();
   const tomorrow = new Date(today);
