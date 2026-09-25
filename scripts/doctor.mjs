@@ -145,28 +145,45 @@ if (!hotels.length) {
     const file = decodeURIComponent(direct.split('/').pop().split('?')[0]);
     const rel = new URL(direct).pathname.replace(/^\/storage\//, '');
     const win = process.platform === 'win32';
+    const find = win
+      ? `Get-ChildItem -Recurse -Filter "${file}" storage\\`
+      : `find storage -name "${file}"`;
 
     remedies.push(
-      `API: nothing is served at /storage/${rel}. Work out which case you are in\n` +
-      '    by finding the file. Run this in the API directory:\n\n' +
-      (win
-        ? `      Get-ChildItem -Recurse -Filter "${file}" storage\\\n\n`
-        : `      find storage -name "${file}"\n\n`) +
-      '    (a) Found under storage/app/private/ — it was written to the `local`\n' +
-      '        disk. Laravel 11+ maps `local` to app/private and the API\'s\n' +
-      '        .env.example ships FILESYSTEM_DISK=local, so an upload with no\n' +
-      '        explicit disk lands somewhere the web can never reach. Pin it:\n' +
-      '            FileUpload::make(\'images\')->disk(\'public\')->directory(\'hotels\')\n' +
-      '        then move the existing files to storage/app/public/hotels/.\n\n' +
-      '    (b) Found under storage/app/public/ — right disk, missing symlink:\n' +
-      '            php artisan storage:link\n' +
-      (win
-        ? '        On Windows that needs an elevated PowerShell, or Developer\n' +
-          '        Mode enabled. Without admin rights, make a junction instead:\n' +
-          '            cmd /c mklink /J "public\\storage" "storage\\app\\public"\n\n'
-        : '\n') +
-      '    (c) Not found at all — the upload never persisted; re-add the image\n' +
-      '        once (a) is in place.',
+      [
+        `API: nothing is served at /storage/${rel}.`,
+        '',
+        '    Filament uploads to the `public` disk by default, so the file is most',
+        `    likely at  storage/app/public/${rel}`,
+        '    which is reachable only through the public/storage symlink.',
+        '',
+        '    Note that /storage/{path} does NOT fall through to the public disk.',
+        "    The API's `local` disk sets 'serve' => true with no 'url', so Laravel",
+        '    registers GET /storage/{path} for it and serves from app/private.',
+        '    It is declared first, so it owns that route and the public disk never',
+        '    gets a look in — hence a 404 rather than your file.',
+        '',
+        '    Fix it either way, from the API directory:',
+        '',
+        '      (a) create the link',
+        '            php artisan storage:link',
+        ...(win
+          ? [
+              '          On Windows this needs an elevated PowerShell or Developer Mode.',
+              '          Without admin rights, make a junction instead:',
+              '            cmd /c mklink /J "public\\storage" "storage\\app\\public"',
+            ]
+          : []),
+        '',
+        '      (b) or let Laravel serve it, no symlink — in config/filesystems.php',
+        "            'local'  => [ ... 'serve' => false ... ],",
+        "            'public' => [ ... 'serve' => true  ... ],",
+        '',
+        '    Confirm where the file actually is:',
+        `          ${find}`,
+        '    If it turns up under app/private/ instead, the upload was pinned to',
+        '    the local disk; add ->disk(\'public\') to the FileUpload field.',
+      ].join('\n'),
     );
   }
 
@@ -198,8 +215,17 @@ if (!hotels.length) {
     `${WEB_ORIGIN}/_next/image?url=${encodeURIComponent(resolved)}&w=640&q=75`,
   );
   if (!optimizer.error) {
-    if (optimizer.type) ok(`next/image optimiser → ${optimizer.res.status}, ${optimizer.type}`);
-    else bad(`next/image optimiser → ${optimizer.res.status} (this is what the browser shows)`);
+    if (optimizer.type) {
+      ok(`next/image optimiser → ${optimizer.res.status}, ${optimizer.type}`);
+    } else if (external) {
+      // Not this app's storage pipeline, and an external host can fail for
+      // reasons that have nothing to do with the setup being checked here.
+      warn(`next/image optimiser → ${optimizer.res.status} for an external host`);
+      dim('Either this machine cannot reach that host, or it is not permitted');
+      dim('by images.remotePatterns in next.config.ts.');
+    } else {
+      bad(`next/image optimiser → ${optimizer.res.status} (this is what the browser shows)`);
+    }
   }
 }
 
