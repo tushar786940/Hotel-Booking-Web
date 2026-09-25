@@ -67,3 +67,63 @@ export const API_ORIGIN = apiOriginFrom(API_BASE_URL) || DEFAULT_API_ORIGIN;
 export const STORAGE_BASE_URL = stripTrailingSlash(
   process.env.NEXT_PUBLIC_STORAGE_URL || `${API_ORIGIN}/storage`,
 );
+
+/** Path the Next rewrite forwards to the API's `public/storage` directory. */
+export const STORAGE_PROXY_PREFIX = '/storage';
+
+/**
+ * Hosts whose images next/image will refuse to fetch.
+ *
+ * Next 16 resolves every *absolute* image URL and rejects it when the hostname
+ * lands on a private IP, to block SSRF:
+ *
+ *   ⨯ upstream image http://localhost:8000/storage/hotels/x.jpg hostname
+ *     resolved to private IP ["::1","127.0.0.1"]
+ *
+ * Which is precisely the normal local setup — Laravel on :8000, Next on :3000.
+ */
+function isPrivateHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (host === '::1' || host === '0.0.0.0') return true;
+
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!ipv4) return false;
+
+  const [a, b] = ipv4.slice(1).map(Number);
+  return (
+    a === 127 ||                          // loopback
+    a === 10 ||                           // private class A
+    (a === 172 && b >= 16 && b <= 31) ||  // private class B
+    (a === 192 && b === 168) ||           // private class C
+    (a === 169 && b === 254)              // link-local
+  );
+}
+
+/**
+ * Turn `http://localhost:8000/storage/hotels/x.jpg` into `/storage/hotels/x.jpg`
+ * so it is served through this app's own origin.
+ *
+ * A `/`-prefixed URL is treated by the image optimiser as a local image: it
+ * skips the private-IP check above and is fetched through Next itself, where
+ * the `/storage/:path*` rewrite in next.config.ts forwards it to the API.
+ *
+ * Only private hosts are rewritten, and only under `/storage`. A public CDN is
+ * left alone — it is not blocked, and proxying it would add a pointless hop.
+ */
+export function toProxiedStorageUrl(url: string): string {
+  if (!/^https?:\/\//i.test(url)) return url;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+
+  if (!parsed.pathname.startsWith(`${STORAGE_PROXY_PREFIX}/`)) return url;
+  if (!isPrivateHost(parsed.hostname)) return url;
+
+  return `${parsed.pathname}${parsed.search}`;
+}

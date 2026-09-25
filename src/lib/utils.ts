@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from 'clsx';
 import { format, parseISO, differenceInDays, isValid } from 'date-fns';
-import { STORAGE_BASE_URL } from '@/lib/config';
+import { STORAGE_BASE_URL, toProxiedStorageUrl } from '@/lib/config';
 import type { ApiImage, Booking, Hotel, PriceBreakdown, RoomType } from '@/types';
 
 export function cn(...inputs: ClassValue[]) {
@@ -218,11 +218,13 @@ export function getImageUrl(
     pathStr = storageWrapped[1];
   }
 
+  // Absolute URLs on a private host are re-pointed at this origin so
+  // next/image will actually fetch them — see toProxiedStorageUrl().
   if (pathStr.startsWith('http://') || pathStr.startsWith('https://')) {
-    return pathStr;
+    return toProxiedStorageUrl(pathStr);
   }
 
-  return `${STORAGE_BASE_URL}/${pathStr.replace(/^\/+/, '')}`;
+  return toProxiedStorageUrl(`${STORAGE_BASE_URL}/${pathStr.replace(/^\/+/, '')}`);
 }
 
 /**

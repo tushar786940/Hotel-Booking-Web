@@ -10,6 +10,12 @@
  */
 import http from 'node:http';
 
+/** A valid 1×1 PNG, served for any /storage/... path (see the handler below). */
+const PNG_1X1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64',
+);
+
 const PORT = Number(process.env.PORT || 8000);
 const HOST = process.env.HOST || '0.0.0.0';
 const ORIGIN = process.env.MOCK_PUBLIC_URL || `http://localhost:${PORT}`;
@@ -951,6 +957,22 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, ORIGIN);
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
   const query = Object.fromEntries(url.searchParams.entries());
+
+  /*
+   * Stand-in for Laravel's `public/storage` symlink, so the frontend's
+   * `/storage/:path*` rewrite has something real to proxy to. Any path under
+   * /storage returns a valid 1×1 PNG; this is about exercising the transport,
+   * not about the pixels.
+   */
+  if (req.method === 'GET' && pathname.startsWith('/storage/')) {
+    console.log(`GET ${pathname} → 200 (storage stub)`);
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Cache-Control': 'public, max-age=60',
+      'Access-Control-Allow-Origin': '*',
+    });
+    return res.end(PNG_1X1);
+  }
 
   let raw = '';
   req.on('data', (chunk) => {

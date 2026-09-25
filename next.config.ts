@@ -40,6 +40,15 @@ const apiHost = (() => {
 
 const nextConfig: NextConfig = {
   images: {
+    /*
+     * Safety net for absolute loopback image URLs that do not come from
+     * getImageUrl() — a NEXT_PUBLIC_STORAGE_URL pointing at a LAN address, say.
+     * Development only: in production this would be a real SSRF hole, and the
+     * same-origin /storage rewrite below is the mechanism that is meant to
+     * carry these images anyway.
+     */
+    dangerouslyAllowLocalIP: process.env.NODE_ENV !== 'production',
+
     remotePatterns: [
       // Images served by the API: asset('storage/hotels/…')
       {
@@ -78,6 +87,19 @@ const nextConfig: NextConfig = {
       {
         source: '/api/v1/:path*',
         destination: `${apiOrigin}/api/v1/:path*`,
+      },
+      /*
+       * Uploaded files, served from the API's `public/storage` symlink.
+       *
+       * This exists so image URLs can be same-origin. next/image resolves an
+       * absolute URL's hostname and refuses private IPs as an SSRF guard, which
+       * rejects the ordinary local setup (Laravel on :8000). A `/`-prefixed URL
+       * is treated as a local image instead and fetched through this rewrite.
+       * `toProxiedStorageUrl()` in src/lib/config.ts produces those URLs.
+       */
+      {
+        source: '/storage/:path*',
+        destination: `${apiOrigin}/storage/:path*`,
       },
     ];
   },

@@ -12,9 +12,17 @@
  * the Filament admin's `Textarea::make('images')` stores.
  */
 import { getHotelImage, getImageUrl, PLACEHOLDER_IMAGE } from '@/lib/utils';
+import { toProxiedStorageUrl } from '@/lib/config';
 
 const APP_URL = 'http://localhost:8000';
 const asset = (path) => `${APP_URL}/${path}`;
+
+/**
+ * What the card ends up rendering. localhost is a private host, so
+ * toProxiedStorageUrl() strips the origin and the image is fetched through
+ * this app's own /storage rewrite — see the note in src/lib/config.ts.
+ */
+const served = (path) => `/${path}`;
 
 let pass = 0, fail = 0;
 const eq = (actual, expected, label) => {
@@ -60,15 +68,16 @@ console.log('\nA. images = ["hotels/abc.jpg", …]  (plain paths)');
 {
   const hotel = apiEmits(['hotels/abc.jpg', 'hotels/def.jpg']);
   eq(hotel.cover_image, asset('storage/hotels/abc.jpg'), 'cover_image is the first path');
-  eq(getHotelImage(hotel), asset('storage/hotels/abc.jpg'), 'card shows the first image');
+  eq(getHotelImage(hotel), served('storage/hotels/abc.jpg'),
+    'card shows the first image, proxied same-origin');
 }
 
 console.log('\nB. images = [{path, thumbnail}, …]  (the documented format)');
 {
   const hotel = apiEmits([{ path: 'hotels/abc.jpg', thumbnail: 'hotels/thumbnails/abc.jpg' }]);
   eq(hotel.cover_image, asset('storage/hotels/thumbnails/abc.jpg'), 'cover_image is the thumbnail');
-  eq(getHotelImage(hotel), hotel.cover_image,
-    'card matches cover_image exactly — preferring images[0] loses nothing');
+  eq(getHotelImage(hotel), toProxiedStorageUrl(hotel.cover_image),
+    'card resolves to the same file as cover_image — preferring images[0] loses nothing');
 }
 
 console.log('\nC. images = "hotels/abc.jpg"  (a string: what the Filament Textarea saves)');
@@ -78,9 +87,9 @@ console.log('\nC. images = "hotels/abc.jpg"  (a string: what the Filament Textar
     'cover_image degrades to the first CHARACTER — this is the reported bug');
   eq(hotel.images[0].url, asset('storage/hotels/abc.jpg'),
     'images[0] is still correct, because collect() wraps the string');
-  eq(getImageUrl(hotel.cover_image), asset('storage/h'),
+  eq(getImageUrl(hotel.cover_image), served('storage/h'),
     'the old cover_image-first ordering would have requested storage/h');
-  eq(getHotelImage(hotel), asset('storage/hotels/abc.jpg'),
+  eq(getHotelImage(hotel), served('storage/hotels/abc.jpg'),
     'card now renders the real image');
 }
 
@@ -108,10 +117,29 @@ console.log('\nF. regressions guarded');
   eq(getImageUrl('https://cdn.example.com/a.jpg'), 'https://cdn.example.com/a.jpg',
     'an ordinary absolute URL is untouched');
   eq(getImageUrl({ url: asset('storage/a.jpg'), thumbnail_url: asset('storage/t.jpg') },
-    'thumbnail_url'), asset('storage/t.jpg'), 'the thumbnail variant is honoured');
+    'thumbnail_url'), served('storage/t.jpg'), 'the thumbnail variant is honoured');
   eq(getImageUrl(undefined), PLACEHOLDER_IMAGE, 'undefined gives the placeholder');
   eq(getImageUrl('   '), PLACEHOLDER_IMAGE, 'whitespace gives the placeholder');
   eq(getImageUrl('null'), PLACEHOLDER_IMAGE, 'the literal string "null" gives the placeholder');
+}
+
+console.log('\nG. same-origin proxying (next/image refuses private IPs)');
+{
+  eq(toProxiedStorageUrl('http://localhost:8000/storage/hotels/x.jpg'),
+    '/storage/hotels/x.jpg', 'localhost is rewritten to a relative URL');
+  eq(toProxiedStorageUrl('http://127.0.0.1:8000/storage/hotels/x.jpg'),
+    '/storage/hotels/x.jpg', '127.0.0.1 too');
+  eq(toProxiedStorageUrl('http://192.168.1.50/storage/hotels/x.jpg'),
+    '/storage/hotels/x.jpg', 'a LAN address too');
+  eq(toProxiedStorageUrl('https://cdn.example.com/storage/hotels/x.jpg'),
+    'https://cdn.example.com/storage/hotels/x.jpg',
+    'a public host is left alone — it is not blocked, so proxying would only add a hop');
+  eq(toProxiedStorageUrl('http://localhost:8000/other/x.jpg'),
+    'http://localhost:8000/other/x.jpg',
+    'only /storage is proxied; nothing else is assumed to be routable');
+  eq(toProxiedStorageUrl('http://localhost:8000/storage/x.jpg?v=2'),
+    '/storage/x.jpg?v=2', 'the query string survives');
+  eq(toProxiedStorageUrl('not a url'), 'not a url', 'a non-URL is returned untouched');
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} passed, ${fail} failed\n`);
