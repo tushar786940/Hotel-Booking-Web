@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "mock:api": "node mock-api/server.mjs",
-    "test:cancel": "node tests/cancel-booking.test.mjs"
+    "test:cancel": "node tests/cancel-booking.test.mjs",
+    "test:images": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/ts-resolver.mjs tests/hotel-images.test.mjs"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.10",

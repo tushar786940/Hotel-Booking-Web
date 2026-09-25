@@ -23,7 +23,10 @@ interface RoomCardProps {
 }
 
 export default function RoomCard({ roomType, guests = 1, nights = 1, onBook }: RoomCardProps) {
-  const imageUrl = getImageUrl(roomType.cover_image || roomType.images?.[0]);
+  // images[0] before cover_image, for the reason spelled out in getHotelImage:
+  // RoomType carries the identical cover_image accessor, so it degrades the
+  // same way when `room_types.images` holds a string instead of a list.
+  const imageUrl = getImageUrl(roomType.images?.[0] ?? roomType.cover_image, 'thumbnail_url');
   const price = getRoomPrice(roomType);
   const validNights = Math.max(nights, 1);
   const pricing = calculatePricing(price, validNights, guests);

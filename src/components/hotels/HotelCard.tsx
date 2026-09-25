@@ -1,10 +1,12 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { Hotel } from '@/types';
-import { formatCurrency, getHotelImage, getHotelMinPrice, cn } from '@/lib/utils';
+import {
+  PLACEHOLDER_IMAGE, formatCurrency, getHotelImage, getHotelMinPrice, cn,
+} from '@/lib/utils';
 import StarRating from '@/components/ui/StarRating';
 import { FiMapPin, FiStar } from 'react-icons/fi';
 
@@ -43,6 +45,7 @@ export default function HotelCard({ hotel, className, stay }: HotelCardProps) {
   const imageUrl = getHotelImage(hotel);
   const minPrice = getHotelMinPrice(hotel);
   const reviewsCount = hotel.reviews_count ?? 0;
+  const [imageFailed, setImageFailed] = useState(false);
 
   return (
     <Link href={buildHotelHref(hotel.slug, stay)} className={cn('group block', className)}>
@@ -50,11 +53,24 @@ export default function HotelCard({ hotel, className, stay }: HotelCardProps) {
         {/* Image */}
         <div className="relative h-56 overflow-hidden">
           <Image
-            src={imageUrl}
+            src={imageFailed ? PLACEHOLDER_IMAGE : imageUrl}
             alt={hotel.name || 'Hotel'}
             fill
             className="object-cover group-hover:scale-105 transition-transform duration-500"
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+            /*
+             * A stored path that no longer resolves (missing file, or
+             * `php artisan storage:link` never run) would otherwise leave a
+             * broken-image box sitting in the middle of the card.
+             */
+            onError={() => {
+              if (process.env.NODE_ENV === 'development') {
+                console.warn(
+                  `[HotelCard] image failed for "${hotel.name}": ${imageUrl}`,
+                );
+              }
+              setImageFailed(true);
+            }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
 

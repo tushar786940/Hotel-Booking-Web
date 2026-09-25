@@ -48,12 +48,15 @@ const nextConfig: NextConfig = {
         port: apiHost.port,
         pathname: '/storage/**',
       },
-      {
-        protocol: 'http',
-        hostname: 'localhost',
-        port: '8000',
-        pathname: '/storage/**',
-      },
+      /*
+       * The API builds image URLs from its own APP_URL, which does not have to
+       * match the origin the frontend talks to — `API_PROXY_TARGET` may say
+       * 127.0.0.1 while APP_URL says localhost, or the API may run on another
+       * port. next/image refuses any host that is not listed here, so allow
+       * both loopback spellings on any port. Omitting `port` matches all.
+       */
+      { protocol: 'http', hostname: 'localhost', pathname: '/storage/**' },
+      { protocol: 'http', hostname: '127.0.0.1', pathname: '/storage/**' },
       {
         protocol: 'https',
         hostname: '**',

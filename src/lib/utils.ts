@@ -206,6 +206,18 @@ export function getImageUrl(
     return PLACEHOLDER_IMAGE;
   }
 
+  /**
+   * The API builds every image URL with `asset('storage/' . $path)`, which
+   * assumes `$path` is a relative storage path. Paste a full URL into the
+   * admin's images field and you get back
+   * `http://api.test/storage/https://cdn.example.com/photo.jpg`.
+   * Recover the real URL rather than requesting a guaranteed 404.
+   */
+  const storageWrapped = pathStr.match(/\/storage\/(https?:\/\/.+)$/i);
+  if (storageWrapped) {
+    pathStr = storageWrapped[1];
+  }
+
   if (pathStr.startsWith('http://') || pathStr.startsWith('https://')) {
     return pathStr;
   }
@@ -213,10 +225,26 @@ export function getImageUrl(
   return `${STORAGE_BASE_URL}/${pathStr.replace(/^\/+/, '')}`;
 }
 
-/** First usable image of a hotel — `cover_image` falls back to `images[0]`. */
+/**
+ * First usable image of a hotel, for cards and list rows.
+ *
+ * `images[0]` is preferred over `cover_image` even though `cover_image` exists
+ * precisely for this. On a correctly populated hotel the two are the same
+ * file — Hotel::getCoverImageAttribute() and images_with_urls[0].thumbnail_url
+ * both resolve to `asset('storage/' . ($first['thumbnail'] ?? $first['path']))`
+ * — so preferring the array costs nothing.
+ *
+ * They diverge when `hotels.images` holds a bare string rather than a list.
+ * The column is cast to `array`, so a string is stored JSON-encoded and read
+ * back as a string; `$this->images[0]` is then a *string offset* and yields
+ * the first character. `cover_image` becomes `storage/h` while
+ * `images_with_urls` still maps correctly, because `collect('…')` wraps the
+ * string into a single-element list. Reading the array first keeps cards
+ * working in that case instead of requesting a one-character filename.
+ */
 export function getHotelImage(hotel?: Partial<Hotel> | null): string {
   if (!hotel) return PLACEHOLDER_IMAGE;
-  return getImageUrl(hotel.cover_image || hotel.images?.[0]);
+  return getImageUrl(hotel.images?.[0] ?? hotel.cover_image, 'thumbnail_url');
 }
 
 export function getStatusColor(status: string): { bg: string; text: string; dot: string } {
