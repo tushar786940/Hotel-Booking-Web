@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Booking } from '@/types';
-import { formatCurrency, formatDate, getImageUrl } from '@/lib/utils';
+import { formatCurrency, formatDate, getImageUrl, getBookingPriceBreakdown } from '@/lib/utils';
 import Badge from '@/components/ui/Badge';
 import { FiCalendar, FiMapPin, FiUsers } from 'react-icons/fi';
 
@@ -16,6 +16,7 @@ export default function BookingCard({ booking }: BookingCardProps) {
   const hotel = booking.hotel;
   const roomType = booking.room_type;
   const imageUrl = hotel?.images?.[0] ? getImageUrl(hotel.images[0]) : '/images/placeholder-hotel.jpg';
+  const price = getBookingPriceBreakdown(booking);
 
   return (
     <Link href={`/bookings/${booking.id}`}>
@@ -67,10 +68,10 @@ export default function BookingCard({ booking }: BookingCardProps) {
               </div>
               <div className="text-right">
                 <span className="text-lg font-bold text-secondary-900">
-                  {formatCurrency(booking.total_price)}
+                  {formatCurrency(price.total)}
                 </span>
                 <span className="text-xs text-secondary-500 block">
-                  {booking.nights} {booking.nights === 1 ? 'night' : 'nights'}
+                  {price.nights} {price.nights === 1 ? 'night' : 'nights'}
                 </span>
               </div>
             </div>
