@@ -4,7 +4,7 @@ import React from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { Hotel } from '@/types';
-import { formatCurrency, getImageUrl, getHotelMinPrice, cn } from '@/lib/utils';
+import { formatCurrency, getHotelImage, getHotelMinPrice, cn } from '@/lib/utils';
 import StarRating from '@/components/ui/StarRating';
 import { FiMapPin, FiStar } from 'react-icons/fi';
 
@@ -14,9 +14,9 @@ interface HotelCardProps {
 }
 
 export default function HotelCard({ hotel, className }: HotelCardProps) {
-  const mainImage = hotel.images?.[0];
-  const imageUrl = getImageUrl(mainImage);
+  const imageUrl = getHotelImage(hotel);
   const minPrice = getHotelMinPrice(hotel);
+  const reviewsCount = hotel.reviews_count ?? 0;
 
   return (
     <Link href={`/hotels/${hotel.slug}`} className={cn('group block', className)}>
@@ -31,12 +31,12 @@ export default function HotelCard({ hotel, className }: HotelCardProps) {
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
-          
-          {/* Stars Badge */}
+
+          {/* Star rating badge */}
           <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-sm rounded-lg px-2.5 py-1 flex items-center gap-1">
             <FiStar className="text-amber-500 text-xs fill-amber-500" />
             <span className="text-xs font-semibold text-secondary-800">
-              {hotel.stars || 3}-Star
+              {hotel.star_rating || 3}-Star
             </span>
           </div>
 
@@ -64,11 +64,11 @@ export default function HotelCard({ hotel, className }: HotelCardProps) {
           </div>
 
           {/* Rating */}
-          {hotel.average_rating && hotel.average_rating > 0 ? (
+          {hotel.average_rating > 0 ? (
             <div className="flex items-center gap-2 mt-3">
               <StarRating rating={hotel.average_rating} size="sm" />
               <span className="text-sm text-secondary-500">
-                ({hotel.reviews_count || 0} {hotel.reviews_count === 1 ? 'review' : 'reviews'})
+                ({reviewsCount} {reviewsCount === 1 ? 'review' : 'reviews'})
               </span>
             </div>
           ) : null}

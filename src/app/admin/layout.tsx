@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
@@ -33,18 +33,24 @@ const navItems = [
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const { user, isAuthenticated, isLoading, logout } = useAuth();
+  const { user, isAuthenticated, isLoading, logout, isHotelOwner } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  if (isLoading) {
-    return <LoadingSpinner fullScreen message="Loading admin..." />;
-  }
+  // The `/manage/*` endpoints are behind `middleware('role:hotel-owner')`,
+  // so anyone else would only ever see 403s here.
+  useEffect(() => {
+    if (isLoading) return;
+    if (!isAuthenticated) {
+      router.push('/auth/login?redirect=/admin');
+    } else if (!isHotelOwner) {
+      router.push('/');
+    }
+  }, [isLoading, isAuthenticated, isHotelOwner, router]);
 
-  if (!isAuthenticated) {
-    router.push('/auth/login?redirect=/admin');
-    return <LoadingSpinner fullScreen />;
+  if (isLoading || !isAuthenticated || !isHotelOwner) {
+    return <LoadingSpinner fullScreen message="Loading dashboard..." />;
   }
 
   const handleLogout = async () => {

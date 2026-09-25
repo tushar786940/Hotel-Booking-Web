@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "mock:api": "node mock-api/server.mjs"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.10",

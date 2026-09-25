@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/lib/utils";
+import { API_ORIGIN } from "@/lib/config";
 import {
   FiMenu,
   FiX,
@@ -18,7 +19,7 @@ import {
 import { HiOutlineBuildingOffice2 } from "react-icons/hi2";
 
 export default function Navbar() {
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, logout, isHotelOwner } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -46,13 +47,11 @@ export default function Navbar() {
   };
 
   const isActive = (path: string) => pathname === path;
-  const isAdmin =
-    user?.email === "admin@stayhub.com" ||
-    user?.role === "admin" ||
-    (user as any)?.roles?.some(
-      (r: any) => r.name === "admin" || r.name === "hotel-owner",
-    ) ||
-    (user as any)?.is_admin === true;
+
+  // The API returns Spatie role names as plain strings: ["guest"],
+  // ["hotel-owner"], ["admin"] — see AuthController@login.
+  const isAdmin = isHotelOwner;
+  const filamentUrl = `${API_ORIGIN}/admin`;
 
   return (
     <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-lg border-b border-secondary-100 shadow-nav">
@@ -180,7 +179,7 @@ export default function Navbar() {
                         </Link> */}
                         {/* Filament Backend Link */}
                         <a
-                          href="http://localhost:8000/admin"
+                          href={filamentUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="flex items-center justify-between px-4 py-2.5 text-sm text-primary-600 hover:bg-primary-50 font-medium transition-colors"
@@ -289,7 +288,7 @@ export default function Navbar() {
                       Web Dashboard
                     </Link> */}
                     <a
-                      href="http://localhost:8000/admin"
+                      href={filamentUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium text-primary-600 bg-primary-50/60 hover:bg-primary-100/60"

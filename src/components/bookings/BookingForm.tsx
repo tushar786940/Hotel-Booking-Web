@@ -4,8 +4,8 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RoomType, Hotel } from '@/types';
 import { useAuth } from '@/context/AuthContext';
-import { bookingsApi } from '@/lib/api';
-import { formatCurrency, calculateNights, getRoomPrice } from '@/lib/utils';
+import { bookingsApi, isFutureDate } from '@/lib/api';
+import { calculatePricing, formatCurrency, calculateNights, getRoomPrice } from '@/lib/utils';
 import Button from '@/components/ui/Button';
 import toast from 'react-hot-toast';
 import { FiCalendar, FiUsers, FiCreditCard } from 'react-icons/fi';
@@ -15,23 +15,29 @@ interface BookingFormProps {
   roomType: RoomType;
   checkIn: string;
   checkOut: string;
+  guests?: number;
   onClose?: () => void;
 }
 
-export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClose }: BookingFormProps) {
+export default function BookingForm({
+  hotel,
+  roomType,
+  checkIn,
+  checkOut,
+  guests: initialGuests = 1,
+  onClose,
+}: BookingFormProps) {
   const { isAuthenticated } = useAuth();
   const router = useRouter();
-  const [guests, setGuests] = useState(2);
+  const capacity = roomType.capacity || 2;
+  const [guests, setGuests] = useState(Math.min(Math.max(initialGuests, 1), capacity));
   const [specialRequests, setSpecialRequests] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Price & Nights calculation
+  // Mirrors PricingService: base + 20% per extra guest over 2, then 12% tax.
   const nights = calculateNights(checkIn, checkOut);
-  const validNights = Math.max(nights, 1);
   const roomPrice = getRoomPrice(roomType);
-  const subtotal = roomPrice * validNights;
-  const taxes = subtotal * 0.12; // 12% tax
-  const total = subtotal + taxes;
+  const pricing = calculatePricing(roomPrice, nights, guests);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,26 +48,34 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
       return;
     }
 
-    if (nights <= 0) {
-      toast.error('Please select valid check-in and check-out dates');
+    // The API validates `check_in` with `after:today`.
+    if (!isFutureDate(checkIn)) {
+      toast.error('Check-in must be a date after today');
+      return;
+    }
+
+    if (checkOut <= checkIn) {
+      toast.error('Check-out must be after check-in');
       return;
     }
 
     setIsSubmitting(true);
     try {
+      // POST /bookings → { room_type_id, check_in, check_out, guests_count,
+      // special_requests }. The API resolves the hotel and a free room itself.
       const response = await bookingsApi.create({
-        hotel_id: hotel.id,
         room_type_id: roomType.id,
         check_in: checkIn,
         check_out: checkOut,
-        guests,
+        guests_count: guests,
         special_requests: specialRequests || undefined,
       });
 
-      const booking = response.data?.data || response.data;
+      const booking = response.data?.data ?? response.data;
       toast.success('Booking created successfully!');
       router.push(`/bookings/${booking.id}`);
-    } catch (error: any) {
+    } catch (error) {
+      // Validation errors are surfaced by the axios interceptor.
       console.error('Booking error:', error);
     } finally {
       setIsSubmitting(false);
@@ -107,7 +121,7 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
               onChange={(e) => setGuests(parseInt(e.target.value))}
               className="w-full pl-10 pr-4 py-2.5 bg-secondary-50 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
-              {Array.from({ length: roomType.max_guests || 2 }, (_, i) => i + 1).map((n) => (
+              {Array.from({ length: Math.min(capacity, 10) }, (_, i) => i + 1).map((n) => (
                 <option key={n} value={n}>
                   {n} {n === 1 ? 'Guest' : 'Guests'}
                 </option>
@@ -125,6 +139,7 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
             value={specialRequests}
             onChange={(e) => setSpecialRequests(e.target.value)}
             rows={3}
+            maxLength={500}
             placeholder="Any special requests for your stay..."
             className="w-full px-3 py-2.5 bg-secondary-50 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
           />
@@ -134,17 +149,28 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
         <div className="border-t border-secondary-100 pt-4 space-y-2">
           <div className="flex items-center justify-between text-sm">
             <span className="text-secondary-500">
-              {formatCurrency(roomPrice)} × {validNights} {validNights === 1 ? 'night' : 'nights'}
+              {formatCurrency(roomPrice)} × {pricing.nights}{' '}
+              {pricing.nights === 1 ? 'night' : 'nights'}
             </span>
-            <span className="text-secondary-700">{formatCurrency(subtotal)}</span>
+            <span className="text-secondary-700">{formatCurrency(pricing.base_price)}</span>
           </div>
+          {pricing.extra_guest_charge > 0 && (
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-secondary-500">
+                Extra {pricing.extra_guests === 1 ? 'guest' : 'guests'} ({pricing.extra_guests})
+              </span>
+              <span className="text-secondary-700">
+                {formatCurrency(pricing.extra_guest_charge)}
+              </span>
+            </div>
+          )}
           <div className="flex items-center justify-between text-sm">
-            <span className="text-secondary-500">Taxes & fees (12%)</span>
-            <span className="text-secondary-700">{formatCurrency(taxes)}</span>
+            <span className="text-secondary-500">Taxes &amp; fees ({pricing.tax_rate})</span>
+            <span className="text-secondary-700">{formatCurrency(pricing.tax)}</span>
           </div>
           <div className="flex items-center justify-between font-semibold text-lg pt-2 border-t border-secondary-100">
             <span className="text-secondary-900">Total</span>
-            <span className="text-primary-700">{formatCurrency(total)}</span>
+            <span className="text-primary-700">{formatCurrency(pricing.total)}</span>
           </div>
         </div>
 
@@ -160,18 +186,13 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
         </Button>
 
         {onClose && (
-          <Button
-            type="button"
-            variant="ghost"
-            fullWidth
-            onClick={onClose}
-          >
+          <Button type="button" variant="ghost" fullWidth onClick={onClose}>
             Cancel
           </Button>
         )}
 
         <p className="text-xs text-center text-secondary-400">
-          You won&apos;t be charged yet. Payment is processed after confirmation.
+          You won&apos;t be charged yet. Payment is taken after the booking is created.
         </p>
       </form>
     </div>

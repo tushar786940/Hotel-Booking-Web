@@ -3,10 +3,12 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { getImageUrl, cn } from '@/lib/utils';
+import type { ApiImage } from '@/types';
 import { FiX, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 
 interface HotelGalleryProps {
-  images: string[];
+  /** `images_with_urls` from the API: [{ url, thumbnail_url }]. */
+  images: Array<ApiImage | string>;
   hotelName: string;
 }
 
@@ -14,7 +16,8 @@ export default function HotelGallery({ images, hotelName }: HotelGalleryProps) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
 
-  const displayImages = images.length > 0 ? images : ['placeholder-hotel.jpg'];
+  const displayImages: Array<ApiImage | string> =
+    images && images.length > 0 ? images : [''];
 
   const openLightbox = (index: number) => {
     setCurrentIndex(index);

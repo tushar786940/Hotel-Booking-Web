@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Booking } from '@/types';
 import { useAuth } from '@/context/AuthContext';
@@ -20,6 +20,20 @@ export default function BookingsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>('all');
 
+  const fetchBookings = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      // GET /bookings → { data: Booking[], meta: { current_page, ... } }
+      const response = await bookingsApi.list();
+      const data = response.data?.data ?? response.data;
+      setBookings(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Failed to fetch bookings:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
       router.push('/auth/login?redirect=/bookings');
@@ -29,20 +43,7 @@ export default function BookingsPage() {
     if (isAuthenticated) {
       fetchBookings();
     }
-  }, [isAuthenticated, authLoading, router]);
-
-  const fetchBookings = async () => {
-    setIsLoading(true);
-    try {
-      const response = await bookingsApi.list();
-      const data = response.data.data || response.data;
-      setBookings(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error('Failed to fetch bookings:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  }, [isAuthenticated, authLoading, router, fetchBookings]);
 
   const filteredBookings = bookings.filter((booking) => {
     switch (activeTab) {
@@ -51,7 +52,7 @@ export default function BookingsPage() {
       case 'completed':
         return ['checked_out', 'checked_in'].includes(booking.status);
       case 'cancelled':
-        return booking.status === 'cancelled';
+        return ['cancelled', 'refunded'].includes(booking.status);
       default:
         return true;
     }
@@ -72,7 +73,7 @@ export default function BookingsPage() {
     {
       key: 'cancelled',
       label: 'Cancelled',
-      count: bookings.filter((b) => b.status === 'cancelled').length,
+      count: bookings.filter((b) => ['cancelled', 'refunded'].includes(b.status)).length,
     },
   ];
 
