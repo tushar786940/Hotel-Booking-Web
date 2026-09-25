@@ -231,6 +231,23 @@ const hotelDetailResource = (h) => ({
   owner: { name: 'Olivia Owner', email: 'owner@example.com' },
 });
 
+/**
+ * Mirrors Booking::isCancellable():
+ *
+ *   in_array($this->status, ['pending', 'confirmed'])
+ *       && $this->check_in->isAfter(now()->addDay())
+ *
+ * The second half is easy to miss: a stay starting within 24 hours can no
+ * longer be cancelled, even while it is still `confirmed`.
+ */
+const isCancellable = (b) => {
+  if (!['pending', 'confirmed'].includes(b.status)) return false;
+  // check_in is a date, so Laravel casts it to midnight local time.
+  const checkIn = new Date(`${b.check_in}T00:00:00`);
+  const cutoff = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  return checkIn > cutoff;
+};
+
 const bookingResource = (b, { withUser = false } = {}) => {
   const rt = roomTypes.find((r) => r.id === b.room_type_id);
   const hotel = hotels.find((h) => h.id === b.hotel_id);
@@ -254,7 +271,7 @@ const bookingResource = (b, { withUser = false } = {}) => {
     total_price: b.total_price,
     status: b.status,
     special_requests: b.special_requests,
-    is_cancellable: ['pending', 'confirmed'].includes(b.status),
+    is_cancellable: isCancellable(b),
     ...(payment
       ? {
           payment: {
@@ -617,10 +634,34 @@ route('POST', '/api/v1/bookings/{id}/cancel', (req, res, params, body) => {
   if (!user) return fail(res, 401, 'Unauthenticated.');
   const booking = bookings.find((b) => String(b.id) === params.id);
   if (!booking) return fail(res, 404, 'Not found.');
-  if (booking.user_id !== user.id) return fail(res, 403, 'Unauthorized');
+  if (booking.user_id !== user.id)
+    return fail(res, 403, 'You are not authorized to cancel this booking.');
+
+  // BookingController@cancel: 'reason' => ['nullable', 'string', 'max:500']
+  if (body.reason != null && typeof body.reason !== 'string')
+    return fail(res, 422, 'The given data was invalid.', {
+      reason: ['The reason field must be a string.'],
+    });
+  if (typeof body.reason === 'string' && body.reason.length > 500)
+    return fail(res, 422, 'The given data was invalid.', {
+      reason: ['The reason field must not be greater than 500 characters.'],
+    });
+
+  // BookingService::cancelBooking() re-checks the rule and throws a
+  // ValidationException keyed `booking` — the status/24h window may well have
+  // changed since the client last loaded the booking.
+  if (!isCancellable(booking))
+    return fail(res, 422, 'The given data was invalid.', {
+      booking: [
+        "This booking cannot be cancelled. Either it's too late or it's already cancelled.",
+      ],
+    });
 
   booking.status = 'cancelled';
+  booking.cancelled_at = new Date().toISOString();
   booking.cancellation_reason = body.reason ?? null;
+  // NOTE: cancelBooking() does not refund. A completed payment stays
+  // `completed`; only an admin can move it to `refunded`.
   return json(res, 200, {
     message: 'Booking cancelled successfully.',
     data: bookingResource(booking),

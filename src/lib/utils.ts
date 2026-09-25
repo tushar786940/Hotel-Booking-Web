@@ -337,3 +337,35 @@ export const AMENITY_ICONS: Record<string, string> = {
   balcony: '🏞️',
   ocean_view: '🌊',
 };
+
+/**
+ * Why the API will refuse to cancel this booking, or `null` when it will allow
+ * it. Mirrors Booking::isCancellable():
+ *
+ *   in_array($this->status, ['pending', 'confirmed'])
+ *       && $this->check_in->isAfter(now()->addDay())
+ *
+ * `is_cancellable` on the resource is the authority — this only explains the
+ * refusal, so a guest is told *why* the button is missing instead of being
+ * left to guess. Cancelled/terminal states are reported first because for
+ * those the 24h window is irrelevant.
+ */
+export function cancellationBlockedReason(booking: Booking): string | null {
+  if (booking.is_cancellable) return null;
+
+  switch (booking.status) {
+    case 'cancelled':
+      return 'This booking has already been cancelled.';
+    case 'refunded':
+      return 'This booking was cancelled and refunded.';
+    case 'checked_in':
+      return 'Your stay has already started, so it can no longer be cancelled online.';
+    case 'checked_out':
+      return 'This stay is complete.';
+    default:
+      // pending/confirmed and still not cancellable ⇒ inside the 24h window.
+      return `Free cancellation closed 24 hours before check-in (${formatDate(
+        booking.check_in,
+      )}). Contact the hotel directly to discuss changes.`;
+  }
+}

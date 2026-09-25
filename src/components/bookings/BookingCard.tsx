@@ -1,25 +1,47 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { Booking } from '@/types';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import Badge from '@/components/ui/Badge';
-import { FiCalendar, FiMapPin, FiUsers, FiHome } from 'react-icons/fi';
+import Button from '@/components/ui/Button';
+import CancelBookingDialog from '@/components/bookings/CancelBookingDialog';
+import { FiCalendar, FiMapPin, FiUsers, FiHome, FiX } from 'react-icons/fi';
 
 interface BookingCardProps {
   booking: Booking;
+  /**
+   * Called with the cancelled booking. When omitted the card shows no cancel
+   * action — the parent owns the list, so it has to be able to refresh it.
+   */
+  onCancelled?: (booking: Booking) => void;
 }
 
-export default function BookingCard({ booking }: BookingCardProps) {
+export default function BookingCard({ booking, onCancelled }: BookingCardProps) {
   // BookingResource returns a trimmed hotel ({id, name, city}) and a room
   // ({room_number, room_type, floor, price_per_night}) — no images.
   const { hotel, room } = booking;
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+
+  // `is_cancellable` is computed by the API (Booking::isCancellable).
+  const canCancel = Boolean(onCancelled) && booking.is_cancellable;
 
   return (
-    <Link href={`/bookings/${booking.id}`}>
-      <div className="bg-white rounded-2xl border border-secondary-100 overflow-hidden hover:shadow-card transition-shadow">
-        <div className="flex flex-col sm:flex-row">
+    <>
+      {/*
+        The whole card used to be one <Link>. A <button> inside an <a> is
+        invalid HTML and would navigate on click, so the link is now an overlay
+        that fills the card and the actions sit above it on the z-axis.
+      */}
+      <div className="relative bg-white rounded-2xl border border-secondary-100 overflow-hidden hover:shadow-card transition-shadow">
+        <Link
+          href={`/bookings/${booking.id}`}
+          className="absolute inset-0 z-0 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+          aria-label={`View booking ${booking.booking_reference}`}
+        />
+
+        <div className="flex flex-col sm:flex-row pointer-events-none">
           {/* Hotel initial tile */}
           <div className="relative w-full sm:w-40 h-24 sm:h-auto flex-shrink-0 bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center">
             <span className="text-4xl font-bold text-white/90">
@@ -79,9 +101,32 @@ export default function BookingCard({ booking }: BookingCardProps) {
                 </span>
               </div>
             </div>
+
+            {canCancel && (
+              // pointer-events re-enabled so this sits above the link overlay.
+              <div className="flex justify-end mt-3 pointer-events-auto relative z-10">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  leftIcon={<FiX />}
+                  onClick={() => setShowCancelDialog(true)}
+                  className="text-danger-600 hover:bg-danger-50"
+                >
+                  Cancel booking
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </div>
-    </Link>
+
+      {onCancelled && showCancelDialog && (
+        <CancelBookingDialog
+          booking={booking}
+          onClose={() => setShowCancelDialog(false)}
+          onCancelled={onCancelled}
+        />
+      )}
+    </>
   );
 }

@@ -34,6 +34,18 @@ export default function BookingsPage() {
     }
   }, []);
 
+  /**
+   * Swap the cancelled booking in place instead of refetching. The API returns
+   * the updated BookingResource, so a round trip would only re-fetch what we
+   * already have — and it would yank the list out from under the guest, since
+   * the row moves to the "Cancelled" tab.
+   */
+  const handleCancelled = useCallback((cancelled: Booking) => {
+    setBookings((current) =>
+      current.map((booking) => (booking.id === cancelled.id ? cancelled : booking)),
+    );
+  }, []);
+
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
       router.push('/auth/login?redirect=/bookings');
@@ -120,7 +132,11 @@ export default function BookingsPage() {
         ) : filteredBookings.length > 0 ? (
           <div className="space-y-4">
             {filteredBookings.map((booking) => (
-              <BookingCard key={booking.id} booking={booking} />
+              <BookingCard
+                key={booking.id}
+                booking={booking}
+                onCancelled={handleCancelled}
+              />
             ))}
           </div>
         ) : (

@@ -5,15 +5,18 @@ import { useParams, useRouter } from 'next/navigation';
 import { Booking, CreateReviewData, PriceBreakdown } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { bookingsApi, invoicesApi, reviewsApi } from '@/lib/api';
-import { formatCurrency, formatDate, getBookingPriceBreakdown } from '@/lib/utils';
+import {
+  cancellationBlockedReason, formatCurrency, formatDate, getBookingPriceBreakdown,
+} from '@/lib/utils';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import StarRating from '@/components/ui/StarRating';
 import PaymentForm from '@/components/bookings/PaymentForm';
+import CancelBookingDialog from '@/components/bookings/CancelBookingDialog';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import toast from 'react-hot-toast';
 import {
-  FiMapPin, FiCalendar, FiUsers, FiClock, FiDownload, FiX, FiAlertCircle, FiHome,
+  FiMapPin, FiCalendar, FiUsers, FiClock, FiDownload, FiX, FiHome,
 } from 'react-icons/fi';
 
 export default function BookingDetailPage() {
@@ -27,8 +30,6 @@ export default function BookingDetailPage() {
   const [priceBreakdown, setPriceBreakdown] = useState<PriceBreakdown | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showCancelModal, setShowCancelModal] = useState(false);
-  const [cancelReason, setCancelReason] = useState('');
-  const [isCancelling, setIsCancelling] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [reviewData, setReviewData] = useState<CreateReviewData>({ rating: 5, comment: '' });
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
@@ -59,20 +60,9 @@ export default function BookingDetailPage() {
     }
   }, [isAuthenticated, authLoading, bookingId, router, fetchBooking]);
 
-  const handleCancel = async () => {
-    setIsCancelling(true);
-    try {
-      // POST /bookings/{id}/cancel → body: { reason }
-      await bookingsApi.cancel(bookingId, cancelReason);
-      toast.success('Booking cancelled successfully');
-      setShowCancelModal(false);
-      fetchBooking();
-    } catch {
-      // Error handled by interceptor
-    } finally {
-      setIsCancelling(false);
-    }
-  };
+  // The cancel response is a full BookingResource, so adopt it directly and
+  // skip the refetch. price_breakdown is unaffected by cancelling.
+  const handleCancelled = (cancelled: Booking) => setBooking(cancelled);
 
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -129,6 +119,7 @@ export default function BookingDetailPage() {
     booking.status === 'pending' && (!payment || payment.status !== 'completed');
   const canReview = booking.status === 'checked_out' && !booking.review;
   const price = priceBreakdown ?? getBookingPriceBreakdown(booking);
+  const cancelBlockedReason = cancellationBlockedReason(booking);
 
   return (
     <div className="page-container">
@@ -362,7 +353,7 @@ export default function BookingDetailPage() {
               )}
 
               {/* `is_cancellable` is computed by the API (Booking::isCancellable) */}
-              {booking.is_cancellable && (
+              {booking.is_cancellable ? (
                 <Button
                   variant="danger"
                   fullWidth
@@ -371,55 +362,26 @@ export default function BookingDetailPage() {
                 >
                   Cancel Booking
                 </Button>
+              ) : (
+                // Don't just hide the button — an upcoming booking with no
+                // cancel control looks broken unless we say why it's gone.
+                cancelBlockedReason && (
+                  <p className="text-xs text-secondary-500 bg-secondary-50 rounded-xl p-3 leading-relaxed">
+                    {cancelBlockedReason}
+                  </p>
+                )
               )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Cancel Modal */}
       {showCancelModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full animate-scale-in">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-danger-50 rounded-full flex items-center justify-center">
-                <FiAlertCircle className="text-danger-500 text-xl" />
-              </div>
-              <h3 className="text-lg font-semibold text-secondary-900">Cancel Booking</h3>
-            </div>
-            <p className="text-sm text-secondary-500 mb-4">
-              Are you sure you want to cancel this booking? This action cannot be undone.
-            </p>
-            <div className="mb-4">
-              <label className="label">Reason (Optional)</label>
-              <textarea
-                value={cancelReason}
-                onChange={(e) => setCancelReason(e.target.value)}
-                rows={3}
-                maxLength={500}
-                placeholder="Why are you cancelling?"
-                className="input-field resize-none"
-              />
-            </div>
-            <div className="flex gap-3">
-              <Button
-                variant="danger"
-                onClick={handleCancel}
-                isLoading={isCancelling}
-                fullWidth
-              >
-                Yes, Cancel Booking
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => setShowCancelModal(false)}
-                fullWidth
-              >
-                Keep Booking
-              </Button>
-            </div>
-          </div>
-        </div>
+        <CancelBookingDialog
+          booking={booking}
+          onClose={() => setShowCancelModal(false)}
+          onCancelled={handleCancelled}
+        />
       )}
     </div>
   );
