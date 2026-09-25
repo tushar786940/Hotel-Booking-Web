@@ -162,8 +162,9 @@ const breakdown = (roomType, nights, guests = 1) => {
 
 // Resources
 /**
- * RoomTypeResource. `available_rooms` is `whenLoaded('rooms')`, so it is OMITTED
- * unless the caller eager-loaded rooms — HotelController@show does not.
+ * RoomTypeResource. `available_rooms` is `whenLoaded('rooms')` and counts rooms
+ * by their `status`/`is_available` flags only — it does NOT consider bookings,
+ * so it is not a date-aware availability figure.
  */
 const roomTypeResource = (rt, { withRooms = false } = {}) => ({
   id: rt.id,
@@ -210,9 +211,13 @@ const hotelDetailResource = (h) => ({
   zip_code: h.zip_code,
   latitude: h.latitude,
   longitude: h.longitude,
-  // HotelController@show eager-loads ['roomTypes', 'reviews'] — NOT roomTypes.rooms,
-  // so available_rooms is absent here.
-  room_types: roomTypesOf(h.id).map((rt) => roomTypeResource(rt)),
+  /**
+   * HotelController@show DOES eager-load 'roomTypes.rooms', so available_rooms
+   * is present — but RoomTypeResource computes it as a plain count of rooms
+   * flagged is_available/status=available. It ignores bookings entirely, so it
+   * is NOT date-aware and will happily report rooms that are fully booked.
+   */
+  room_types: roomTypesOf(h.id).map((rt) => roomTypeResource(rt, { withRooms: true })),
   reviews: reviews
     .filter((r) => r.hotel_id === h.id)
     .slice(0, 10)
