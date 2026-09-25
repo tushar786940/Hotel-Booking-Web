@@ -4,7 +4,7 @@ import React from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { Hotel } from '@/types';
-import { formatCurrency, getImageUrl, cn } from '@/lib/utils';
+import { formatCurrency, getImageUrl, getHotelMinPrice, cn } from '@/lib/utils';
 import StarRating from '@/components/ui/StarRating';
 import { FiMapPin, FiStar } from 'react-icons/fi';
 
@@ -15,7 +15,8 @@ interface HotelCardProps {
 
 export default function HotelCard({ hotel, className }: HotelCardProps) {
   const mainImage = hotel.images?.[0];
-  const imageUrl = mainImage ? getImageUrl(mainImage) : '/images/placeholder-hotel.jpg';
+  const imageUrl = getImageUrl(mainImage);
+  const minPrice = getHotelMinPrice(hotel);
 
   return (
     <Link href={`/hotels/${hotel.slug}`} className={cn('group block', className)}>
@@ -24,7 +25,7 @@ export default function HotelCard({ hotel, className }: HotelCardProps) {
         <div className="relative h-56 overflow-hidden">
           <Image
             src={imageUrl}
-            alt={hotel.name}
+            alt={hotel.name || 'Hotel'}
             fill
             className="object-cover group-hover:scale-105 transition-transform duration-500"
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
@@ -35,16 +36,16 @@ export default function HotelCard({ hotel, className }: HotelCardProps) {
           <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-sm rounded-lg px-2.5 py-1 flex items-center gap-1">
             <FiStar className="text-amber-500 text-xs fill-amber-500" />
             <span className="text-xs font-semibold text-secondary-800">
-              {hotel.stars}-Star
+              {hotel.stars || 3}-Star
             </span>
           </div>
 
           {/* Price Badge */}
-          {hotel.min_price && (
-            <div className="absolute bottom-3 right-3 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-1.5">
+          {minPrice > 0 && (
+            <div className="absolute bottom-3 right-3 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-1.5 shadow-sm">
               <span className="text-xs text-secondary-500">from </span>
               <span className="text-lg font-bold text-primary-700">
-                {formatCurrency(hotel.min_price)}
+                {formatCurrency(minPrice)}
               </span>
               <span className="text-xs text-secondary-500">/night</span>
             </div>
@@ -63,14 +64,14 @@ export default function HotelCard({ hotel, className }: HotelCardProps) {
           </div>
 
           {/* Rating */}
-          {hotel.average_rating && hotel.average_rating > 0 && (
+          {hotel.average_rating && hotel.average_rating > 0 ? (
             <div className="flex items-center gap-2 mt-3">
               <StarRating rating={hotel.average_rating} size="sm" />
               <span className="text-sm text-secondary-500">
-                ({hotel.reviews_count} {hotel.reviews_count === 1 ? 'review' : 'reviews'})
+                ({hotel.reviews_count || 0} {hotel.reviews_count === 1 ? 'review' : 'reviews'})
               </span>
             </div>
-          )}
+          ) : null}
 
           {/* Amenities */}
           {hotel.amenities && hotel.amenities.length > 0 && (
@@ -80,7 +81,7 @@ export default function HotelCard({ hotel, className }: HotelCardProps) {
                   key={amenity}
                   className="px-2 py-0.5 bg-secondary-50 text-secondary-600 text-xs rounded-md capitalize"
                 >
-                  {amenity.replace('_', ' ')}
+                  {String(amenity).replace(/_/g, ' ')}
                 </span>
               ))}
               {hotel.amenities.length > 4 && (
@@ -92,9 +93,11 @@ export default function HotelCard({ hotel, className }: HotelCardProps) {
           )}
 
           {/* Description */}
-          <p className="text-sm text-secondary-500 mt-3 line-clamp-2 flex-1">
-            {hotel.description}
-          </p>
+          {hotel.description && (
+            <p className="text-sm text-secondary-500 mt-3 line-clamp-2 flex-1">
+              {hotel.description}
+            </p>
+          )}
         </div>
       </div>
     </Link>

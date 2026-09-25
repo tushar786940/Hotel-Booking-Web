@@ -21,19 +21,9 @@ export default function PaymentForm({ booking, onPaymentSuccess }: PaymentFormPr
   const handlePayment = async () => {
     setIsProcessing(true);
     try {
-      const response = await paymentsApi.create({
-        booking_id: booking.id,
-        method,
-      });
-
-      const payment = response.data.data || response.data;
-
-      // For demo purposes, simulate payment confirmation
-      if (payment.id) {
-        await paymentsApi.confirm(payment.id);
-        toast.success('Payment completed successfully!');
-        onPaymentSuccess();
-      }
+      await paymentsApi.pay(booking.id, { method });
+      toast.success('Payment completed successfully!');
+      onPaymentSuccess();
     } catch (error: any) {
       console.error('Payment error:', error);
     } finally {
@@ -48,7 +38,6 @@ export default function PaymentForm({ booking, onPaymentSuccess }: PaymentFormPr
         Payment
       </h3>
 
-      {/* Amount */}
       <div className="bg-primary-50 rounded-xl p-4 mb-6 text-center">
         <p className="text-sm text-primary-600 mb-1">Amount to Pay</p>
         <p className="text-3xl font-bold text-primary-700">
@@ -56,7 +45,6 @@ export default function PaymentForm({ booking, onPaymentSuccess }: PaymentFormPr
         </p>
       </div>
 
-      {/* Payment Method Selection */}
       <div className="space-y-3 mb-6">
         <p className="text-sm font-medium text-secondary-700">Select Payment Method</p>
 
@@ -119,7 +107,6 @@ export default function PaymentForm({ booking, onPaymentSuccess }: PaymentFormPr
         </label>
       </div>
 
-      {/* Pay Button */}
       <Button
         onClick={handlePayment}
         isLoading={isProcessing}
@@ -130,7 +117,6 @@ export default function PaymentForm({ booking, onPaymentSuccess }: PaymentFormPr
         Pay {formatCurrency(booking.total_price)}
       </Button>
 
-      {/* Security Notice */}
       <div className="flex items-center justify-center gap-2 mt-4 text-xs text-secondary-400">
         <FiShield className="text-success-500" />
         <span>Your payment is secured with 256-bit encryption</span>

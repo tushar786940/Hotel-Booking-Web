@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import React, { useState, useRef, useEffect } from 'react';
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import { useAuth } from '@/context/AuthContext';
-import { cn } from '@/lib/utils';
+import React, { useState, useRef, useEffect } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
+import { cn } from "@/lib/utils";
 import {
   FiMenu,
   FiX,
@@ -12,8 +12,10 @@ import {
   FiLogOut,
   FiCalendar,
   FiChevronDown,
-} from 'react-icons/fi';
-import { HiOutlineBuildingOffice2 } from 'react-icons/hi2';
+  FiShield,
+  FiExternalLink,
+} from "react-icons/fi";
+import { HiOutlineBuildingOffice2 } from "react-icons/hi2";
 
 export default function Navbar() {
   const { user, isAuthenticated, logout } = useAuth();
@@ -26,21 +28,31 @@ export default function Navbar() {
   // Close dropdown on outside click
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
         setIsProfileDropdownOpen(false);
       }
     }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   const handleLogout = async () => {
     await logout();
     setIsProfileDropdownOpen(false);
-    router.push('/');
+    router.push("/");
   };
 
   const isActive = (path: string) => pathname === path;
+  const isAdmin =
+    user?.email === "admin@stayhub.com" ||
+    user?.role === "admin" ||
+    (user as any)?.roles?.some(
+      (r: any) => r.name === "admin" || r.name === "hotel-owner",
+    ) ||
+    (user as any)?.is_admin === true;
 
   return (
     <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-lg border-b border-secondary-100 shadow-nav">
@@ -61,10 +73,10 @@ export default function Navbar() {
             <Link
               href="/"
               className={cn(
-                'px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                isActive('/')
-                  ? 'text-primary-600 bg-primary-50'
-                  : 'text-secondary-600 hover:text-secondary-900 hover:bg-secondary-50'
+                "px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                isActive("/")
+                  ? "text-primary-600 bg-primary-50"
+                  : "text-secondary-600 hover:text-secondary-900 hover:bg-secondary-50",
               )}
             >
               Home
@@ -72,10 +84,10 @@ export default function Navbar() {
             <Link
               href="/search"
               className={cn(
-                'px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                isActive('/search')
-                  ? 'text-primary-600 bg-primary-50'
-                  : 'text-secondary-600 hover:text-secondary-900 hover:bg-secondary-50'
+                "px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                isActive("/search")
+                  ? "text-primary-600 bg-primary-50"
+                  : "text-secondary-600 hover:text-secondary-900 hover:bg-secondary-50",
               )}
             >
               Search Hotels
@@ -84,10 +96,10 @@ export default function Navbar() {
               <Link
                 href="/bookings"
                 className={cn(
-                  'px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                  isActive('/bookings')
-                    ? 'text-primary-600 bg-primary-50'
-                    : 'text-secondary-600 hover:text-secondary-900 hover:bg-secondary-50'
+                  "px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                  isActive("/bookings")
+                    ? "text-primary-600 bg-primary-50"
+                    : "text-secondary-600 hover:text-secondary-900 hover:bg-secondary-50",
                 )}
               >
                 My Bookings
@@ -95,12 +107,14 @@ export default function Navbar() {
             )}
           </div>
 
-          {/* Desktop Auth */}
+          {/* Desktop Auth & Actions */}
           <div className="hidden md:flex items-center gap-3">
             {isAuthenticated ? (
               <div className="relative" ref={dropdownRef}>
                 <button
-                  onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
+                  onClick={() =>
+                    setIsProfileDropdownOpen(!isProfileDropdownOpen)
+                  }
                   className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-secondary-50 transition-colors"
                 >
                   <div className="w-8 h-8 bg-gradient-to-br from-primary-400 to-primary-600 rounded-full flex items-center justify-center text-white text-sm font-semibold">
@@ -111,18 +125,30 @@ export default function Navbar() {
                   </span>
                   <FiChevronDown
                     className={cn(
-                      'text-secondary-400 transition-transform duration-200',
-                      isProfileDropdownOpen && 'rotate-180'
+                      "text-secondary-400 transition-transform duration-200",
+                      isProfileDropdownOpen && "rotate-180",
                     )}
                   />
                 </button>
 
                 {isProfileDropdownOpen && (
-                  <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-secondary-100 py-2 animate-slide-down">
+                  <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-lg border border-secondary-100 py-2 animate-slide-down">
                     <div className="px-4 py-2 border-b border-secondary-100">
-                      <p className="text-sm font-medium text-secondary-900">{user?.name}</p>
-                      <p className="text-xs text-secondary-500">{user?.email}</p>
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium text-secondary-900">
+                          {user?.name}
+                        </p>
+                        {isAdmin && (
+                          <span className="text-[10px] bg-primary-100 text-primary-700 font-bold px-1.5 py-0.5 rounded uppercase">
+                            Admin
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-secondary-500 truncate">
+                        {user?.email}
+                      </p>
                     </div>
+
                     <Link
                       href="/profile"
                       onClick={() => setIsProfileDropdownOpen(false)}
@@ -139,6 +165,35 @@ export default function Navbar() {
                       <FiCalendar className="text-secondary-400" />
                       My Bookings
                     </Link>
+
+                    {/* Admin Links Section */}
+                    {isAdmin && (
+                      <>
+                        <hr className="my-1 border-secondary-100" />
+                        {/* <Link
+                          href="/admin"
+                          onClick={() => setIsProfileDropdownOpen(false)}
+                          className="flex items-center gap-3 px-4 py-2.5 text-sm text-secondary-700 hover:bg-secondary-50 transition-colors"
+                        >
+                          <HiOutlineBuildingOffice2 className="text-secondary-400 text-base" />
+                          Web Dashboard
+                        </Link> */}
+                        {/* Filament Backend Link */}
+                        <a
+                          href="http://localhost:8000/admin"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center justify-between px-4 py-2.5 text-sm text-primary-600 hover:bg-primary-50 font-medium transition-colors"
+                        >
+                          <div className="flex items-center gap-3">
+                            <FiShield className="text-primary-500" />
+                            Filament Admin Panel
+                          </div>
+                          <FiExternalLink className="text-xs text-primary-400" />
+                        </a>
+                      </>
+                    )}
+
                     <hr className="my-1 border-secondary-100" />
                     <button
                       onClick={handleLogout}
@@ -186,8 +241,10 @@ export default function Navbar() {
               href="/"
               onClick={() => setIsMobileMenuOpen(false)}
               className={cn(
-                'block px-4 py-3 rounded-xl text-sm font-medium transition-colors',
-                isActive('/') ? 'text-primary-600 bg-primary-50' : 'text-secondary-600 hover:bg-secondary-50'
+                "block px-4 py-3 rounded-xl text-sm font-medium transition-colors",
+                isActive("/")
+                  ? "text-primary-600 bg-primary-50"
+                  : "text-secondary-600 hover:bg-secondary-50",
               )}
             >
               Home
@@ -196,8 +253,10 @@ export default function Navbar() {
               href="/search"
               onClick={() => setIsMobileMenuOpen(false)}
               className={cn(
-                'block px-4 py-3 rounded-xl text-sm font-medium transition-colors',
-                isActive('/search') ? 'text-primary-600 bg-primary-50' : 'text-secondary-600 hover:bg-secondary-50'
+                "block px-4 py-3 rounded-xl text-sm font-medium transition-colors",
+                isActive("/search")
+                  ? "text-primary-600 bg-primary-50"
+                  : "text-secondary-600 hover:bg-secondary-50",
               )}
             >
               Search Hotels
@@ -218,6 +277,29 @@ export default function Navbar() {
                 >
                   Profile
                 </Link>
+
+                {/* Mobile Admin Links */}
+                {isAdmin && (
+                  <div className="pt-2 border-t border-secondary-100 mt-2 space-y-1">
+                    {/* <Link
+                      href="/admin"
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className="block px-4 py-3 rounded-xl text-sm font-medium text-secondary-700 hover:bg-secondary-50"
+                    >
+                      Web Dashboard
+                    </Link> */}
+                    <a
+                      href="http://localhost:8000/admin"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium text-primary-600 bg-primary-50/60 hover:bg-primary-100/60"
+                    >
+                      <span>Filament Admin Panel</span>
+                      <FiExternalLink size={16} />
+                    </a>
+                  </div>
+                )}
+
                 <button
                   onClick={() => {
                     handleLogout();

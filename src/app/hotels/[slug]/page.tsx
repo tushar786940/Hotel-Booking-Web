@@ -1,22 +1,23 @@
+// src/app/hotels/[slug]/page.tsx
 'use client';
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { Hotel, RoomType, Review } from '@/types';
 import { hotelsApi, availabilityApi, reviewsApi } from '@/lib/api';
-import { formatCurrency, formatDate, calculateNights, generateBookingDates, cn, AMENITY_ICONS } from '@/lib/utils';
+import { formatCurrency, formatDate, calculateNights, generateBookingDates, cn, AMENITY_ICONS, getHotelMinPrice } from '@/lib/utils';
 import HotelGallery from '@/components/hotels/HotelGallery';
 import RoomCard from '@/components/hotels/RoomCard';
 import BookingForm from '@/components/bookings/BookingForm';
 import StarRating from '@/components/ui/StarRating';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Button from '@/components/ui/Button';
-import { FiMapPin, FiClock, FiCalendar, FiUsers, FiStar, FiWifi, FiX } from 'react-icons/fi';
+import { FiMapPin, FiClock, FiCalendar, FiUsers } from 'react-icons/fi';
 
 export default function HotelDetailPage() {
   const params = useParams();
   const searchParams = useSearchParams();
-  const slug = params.slug as string;
+  const slug = params?.slug as string;
   const { defaultCheckIn, defaultCheckOut, minCheckIn } = generateBookingDates();
 
   const [hotel, setHotel] = useState<Hotel | null>(null);
@@ -35,20 +36,25 @@ export default function HotelDetailPage() {
   const nights = calculateNights(checkIn, checkOut);
 
   useEffect(() => {
+    if (!slug) return;
+
     const fetchHotel = async () => {
       setIsLoading(true);
       try {
         const response = await hotelsApi.getBySlug(slug);
-        const hotelData = response.data.data || response.data;
+        const hotelData = response.data?.data || response.data;
         setHotel(hotelData);
-        setRoomTypes(hotelData.room_types || []);
+        setRoomTypes(hotelData?.room_types || []);
 
-        // Fetch reviews
-        try {
-          const reviewsResponse = await reviewsApi.listByHotel(hotelData.id);
-          setReviews(reviewsResponse.data.data || []);
-        } catch {
-          // Reviews might not exist yet
+        // Fetch reviews safely
+        if (hotelData?.id) {
+          try {
+            const reviewsResponse = await reviewsApi.listByHotel(hotelData.id);
+            const reviewData = reviewsResponse.data?.data || reviewsResponse.data;
+            setReviews(Array.isArray(reviewData) ? reviewData : []);
+          } catch {
+            setReviews([]);
+          }
         }
       } catch (error: any) {
         setError('Hotel not found');
@@ -60,9 +66,9 @@ export default function HotelDetailPage() {
     fetchHotel();
   }, [slug]);
 
-  // Check availability when dates change
+  // Merge availability response safely into original room types
   useEffect(() => {
-    if (!hotel || !checkIn || !checkOut) return;
+    if (!hotel?.id || !checkIn || !checkOut || roomTypes.length === 0) return;
 
     const checkAvailability = async () => {
       try {
@@ -71,17 +77,36 @@ export default function HotelDetailPage() {
           check_out: checkOut,
           guests,
         });
-        const availableRooms = response.data.data || response.data;
-        if (Array.isArray(availableRooms)) {
-          setRoomTypes(availableRooms);
+        const availabilityData = response.data?.data || response.data;
+
+        if (Array.isArray(availabilityData) && availabilityData.length > 0) {
+          setRoomTypes((prevTypes) =>
+            prevTypes.map((original) => {
+              const match = availabilityData.find((item: any) => {
+                const matchId = item.id ?? item.room_type_id ?? item.room_type?.id;
+                return String(matchId) === String(original.id);
+              });
+
+              if (match) {
+                return {
+                  ...original,
+                  available_rooms: match.available_rooms ?? match.available_count ?? match.count ?? original.available_rooms,
+                  // Retain original name, price, description if match is missing them
+                  name: match.name || match.room_type?.name || original.name,
+                  base_price: match.base_price || match.price || match.room_type?.base_price || original.price_per_night,
+                };
+              }
+              return original;
+            })
+          );
         }
       } catch {
-        // Keep existing room types
+        // Retain original room types on network error
       }
     };
 
     checkAvailability();
-  }, [hotel, checkIn, checkOut, guests]);
+  }, [hotel?.id, checkIn, checkOut, guests]);
 
   const handleBookRoom = (roomType: RoomType) => {
     setSelectedRoom(roomType);
@@ -104,11 +129,13 @@ export default function HotelDetailPage() {
     );
   }
 
+  const hotelMinPrice = getHotelMinPrice({ ...hotel, room_types: roomTypes });
+
   return (
     <div className="min-h-screen bg-secondary-50">
       {/* Gallery */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-        <HotelGallery images={hotel.images || []} hotelName={hotel.name} />
+        <HotelGallery images={hotel.images || []} hotelName={hotel.name || 'Hotel'} />
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -121,12 +148,12 @@ export default function HotelDetailPage() {
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <span className="bg-primary-50 text-primary-700 text-xs font-semibold px-2.5 py-1 rounded-lg">
-                      {hotel.stars}-Star Hotel
+                      {hotel.stars || 3}-Star Hotel
                     </span>
                     {hotel.average_rating && hotel.average_rating > 0 && (
                       <div className="flex items-center gap-1 text-sm">
                         <StarRating rating={hotel.average_rating} size="sm" />
-                        <span className="text-secondary-500">({hotel.reviews_count})</span>
+                        <span className="text-secondary-500">({hotel.reviews_count || reviews.length})</span>
                       </div>
                     )}
                   </div>
@@ -141,11 +168,11 @@ export default function HotelDetailPage() {
               <div className="flex flex-wrap gap-4 mt-4">
                 <div className="flex items-center gap-2 text-sm text-secondary-600">
                   <FiClock className="text-primary-500" />
-                  Check-in: {hotel.check_in_time}
+                  Check-in: {hotel.check_in_time || '14:00'}
                 </div>
                 <div className="flex items-center gap-2 text-sm text-secondary-600">
                   <FiClock className="text-primary-500" />
-                  Check-out: {hotel.check_out_time}
+                  Check-out: {hotel.check_out_time || '11:00'}
                 </div>
               </div>
             </div>
@@ -157,20 +184,20 @@ export default function HotelDetailPage() {
             </div>
 
             {/* Amenities */}
-            {hotel.amenities && hotel.amenities.length > 0 && (
+            {hotel.amenities && Array.isArray(hotel.amenities) && hotel.amenities.length > 0 && (
               <div className="bg-white rounded-2xl border border-secondary-100 p-6">
                 <h2 className="text-lg font-semibold text-secondary-900 mb-4">Amenities</h2>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {hotel.amenities.map((amenity) => (
+                  {hotel.amenities.map((amenity, index) => (
                     <div
-                      key={amenity}
+                      key={`amenity-${amenity}-${index}`}
                       className="flex items-center gap-3 px-4 py-3 bg-secondary-50 rounded-xl"
                     >
                       <span className="text-lg">
                         {AMENITY_ICONS[amenity] || '✓'}
                       </span>
                       <span className="text-sm text-secondary-700 capitalize">
-                        {amenity.replace(/_/g, ' ')}
+                        {String(amenity).replace(/_/g, ' ')}
                       </span>
                     </div>
                   ))}
@@ -234,11 +261,11 @@ export default function HotelDetailPage() {
             {/* Room Types */}
             <div>
               <h2 className="text-lg font-semibold text-secondary-900 mb-4">Available Rooms</h2>
-              {roomTypes.length > 0 ? (
+              {roomTypes && roomTypes.length > 0 ? (
                 <div className="space-y-4">
-                  {roomTypes.map((roomType) => (
+                  {roomTypes.map((roomType, index) => (
                     <RoomCard
-                      key={roomType.id}
+                      key={roomType.id ? `room-type-${roomType.id}` : `room-type-${index}`}
                       roomType={roomType}
                       checkIn={checkIn}
                       checkOut={checkOut}
@@ -267,8 +294,11 @@ export default function HotelDetailPage() {
 
               {reviews.length > 0 ? (
                 <div className="space-y-6">
-                  {reviews.map((review) => (
-                    <div key={review.id} className="border-b border-secondary-100 pb-6 last:border-0 last:pb-0">
+                  {reviews.map((review, index) => (
+                    <div
+                      key={review.id ? `review-${review.id}` : `review-${index}`}
+                      className="border-b border-secondary-100 pb-6 last:border-0 last:pb-0"
+                    >
                       <div className="flex items-start justify-between gap-4">
                         <div>
                           <div className="flex items-center gap-3">
@@ -287,7 +317,9 @@ export default function HotelDetailPage() {
                         </div>
                         <StarRating rating={review.rating} size="sm" />
                       </div>
-                      <h4 className="font-medium text-secondary-900 mt-3">{review.title}</h4>
+                      {review.title && (
+                        <h4 className="font-medium text-secondary-900 mt-3">{review.title}</h4>
+                      )}
                       <p className="text-sm text-secondary-600 mt-1">{review.comment}</p>
                       {review.pros && (
                         <p className="text-sm text-success-600 mt-2">👍 {review.pros}</p>
@@ -320,15 +352,16 @@ export default function HotelDetailPage() {
               ) : (
                 <div className="bg-white rounded-2xl border border-secondary-100 p-6">
                   <div className="text-center">
-                    {hotel.min_price && (
+                    {hotelMinPrice > 0 && (
                       <div className="mb-4">
                         <span className="text-sm text-secondary-500">Starting from</span>
                         <p className="text-3xl font-bold text-primary-700">
-                          {formatCurrency(hotel.min_price)}
+                          {formatCurrency(hotelMinPrice)}
                         </p>
                         <span className="text-sm text-secondary-500">per night</span>
                       </div>
                     )}
+                    
                     <p className="text-sm text-secondary-500 mb-4">
                       Select a room above to start your booking
                     </p>

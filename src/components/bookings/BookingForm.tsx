@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { RoomType, Hotel } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { bookingsApi } from '@/lib/api';
-import { formatCurrency, calculateNights, cn } from '@/lib/utils';
+import { formatCurrency, calculateNights, getRoomPrice } from '@/lib/utils';
 import Button from '@/components/ui/Button';
 import toast from 'react-hot-toast';
 import { FiCalendar, FiUsers, FiCreditCard } from 'react-icons/fi';
@@ -25,8 +25,11 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
   const [specialRequests, setSpecialRequests] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Price & Nights calculation
   const nights = calculateNights(checkIn, checkOut);
-  const subtotal = roomType.price_per_night * nights;
+  const validNights = Math.max(nights, 1);
+  const roomPrice = getRoomPrice(roomType);
+  const subtotal = roomPrice * validNights;
   const taxes = subtotal * 0.12; // 12% tax
   const total = subtotal + taxes;
 
@@ -55,11 +58,10 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
         special_requests: specialRequests || undefined,
       });
 
-      const booking = response.data.data || response.data;
+      const booking = response.data?.data || response.data;
       toast.success('Booking created successfully!');
       router.push(`/bookings/${booking.id}`);
     } catch (error: any) {
-      // Error is handled by interceptor
       console.error('Booking error:', error);
     } finally {
       setIsSubmitting(false);
@@ -105,7 +107,7 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
               onChange={(e) => setGuests(parseInt(e.target.value))}
               className="w-full pl-10 pr-4 py-2.5 bg-secondary-50 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
-              {Array.from({ length: roomType.max_guests }, (_, i) => i + 1).map((n) => (
+              {Array.from({ length: roomType.max_guests || 2 }, (_, i) => i + 1).map((n) => (
                 <option key={n} value={n}>
                   {n} {n === 1 ? 'Guest' : 'Guests'}
                 </option>
@@ -132,12 +134,12 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
         <div className="border-t border-secondary-100 pt-4 space-y-2">
           <div className="flex items-center justify-between text-sm">
             <span className="text-secondary-500">
-              {formatCurrency(roomType.price_per_night)} × {nights} {nights === 1 ? 'night' : 'nights'}
+              {formatCurrency(roomPrice)} × {validNights} {validNights === 1 ? 'night' : 'nights'}
             </span>
             <span className="text-secondary-700">{formatCurrency(subtotal)}</span>
           </div>
           <div className="flex items-center justify-between text-sm">
-            <span className="text-secondary-500">Taxes & fees</span>
+            <span className="text-secondary-500">Taxes & fees (12%)</span>
             <span className="text-secondary-700">{formatCurrency(taxes)}</span>
           </div>
           <div className="flex items-center justify-between font-semibold text-lg pt-2 border-t border-secondary-100">

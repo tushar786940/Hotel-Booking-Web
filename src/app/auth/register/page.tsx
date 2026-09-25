@@ -9,7 +9,7 @@ import { FiUser, FiMail, FiLock, FiPhone, FiEye, FiEyeOff } from 'react-icons/fi
 import { HiOutlineBuildingOffice2 } from 'react-icons/hi2';
 
 export default function RegisterPage() {
-  const { register, isLoading } = useAuth();
+  const { register } = useAuth();
   const router = useRouter();
 
   const [formData, setFormData] = useState({
@@ -20,6 +20,7 @@ export default function RegisterPage() {
     phone: '',
   });
   const [showPassword, setShowPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const updateField = (field: string, value: string) => {
@@ -46,11 +47,14 @@ export default function RegisterPage() {
     e.preventDefault();
     if (!validate()) return;
 
+    setIsSubmitting(true);
     try {
       await register(formData);
       router.push('/');
     } catch {
-      // Error handled in context
+      // Error handled in AuthContext
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -160,7 +164,7 @@ export default function RegisterPage() {
               )}
             </div>
 
-            <Button type="submit" fullWidth size="lg" isLoading={isLoading}>
+            <Button type="submit" fullWidth size="lg" isLoading={isSubmitting}>
               Create Account
             </Button>
           </form>

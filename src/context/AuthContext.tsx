@@ -1,24 +1,10 @@
-"use client";
+'use client';
 
-import React, {
-  createContext,
-  useContext,
-  useState,
-  useEffect,
-  useCallback,
-} from "react";
-import { User } from "@/types";
-import { authApi } from "@/lib/api";
-import {
-  getToken,
-  setToken,
-  removeToken,
-  getUser,
-  setUser,
-  removeUser,
-  clearAuth,
-} from "@/lib/auth";
-import toast from "react-hot-toast";
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { User } from '@/types';
+import { authApi } from '@/lib/api';
+import { getToken, setToken, setUser, clearAuth, getUser } from '@/lib/auth';
+import toast from 'react-hot-toast';
 
 interface AuthContextType {
   user: User | null;
@@ -43,51 +29,75 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUserState] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const isAuthenticated = !!user;
+  const extractAuthData = (resData: any): { user: User; token: string } => {
+    const raw = resData?.data || resData;
+    const token = raw?.token || raw?.access_token || raw?.plainTextToken || '';
+    const user = raw?.user || raw;
+    return { user, token };
+  };
 
   const refreshUser = useCallback(async () => {
-    try {
-      const token = getToken();
-      if (!token) {
-        setUserState(null);
-        setIsLoading(false);
-        return;
-      }
-
-      const response = await authApi.getProfile();
-      const userData = response.data.data || response.data;
-      setUserState(userData);
-      setUser(userData);
-    } catch (error) {
+    const token = getToken();
+    if (!token) {
       clearAuth();
       setUserState(null);
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const response = await authApi.getProfile();
+      const userData = response.data?.data?.user || response.data?.data || response.data;
+      if (userData && (userData.id || userData.email)) {
+        setUserState(userData);
+        setUser(userData);
+      }
+    } catch (error: any) {
+      // ⚠️ ONLY clear session if server explicitly returns 401 Unauthorized
+      if (error?.response?.status === 401) {
+        clearAuth();
+        setUserState(null);
+      } else {
+        // For 404 or other network glitches, keep existing user from localStorage
+        const cachedUser = getUser();
+        if (cachedUser) {
+          setUserState(cachedUser);
+        }
+      }
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    // Try to load user from localStorage first for quick UI
+    const token = getToken();
     const cachedUser = getUser();
-    if (cachedUser) {
+
+    if (token && cachedUser) {
       setUserState(cachedUser);
+      setIsLoading(false);
+      refreshUser();
+    } else {
+      setIsLoading(false);
     }
-    // Then verify with server
-    refreshUser();
   }, [refreshUser]);
 
   const login = async (email: string, password: string) => {
     setIsLoading(true);
     try {
       const response = await authApi.login({ email, password });
-      const { user: userData, token } = response.data.data || response.data;
+      const { user: userData, token } = extractAuthData(response.data);
+
+      if (!token) {
+        throw new Error('No authentication token received from server');
+      }
 
       setToken(token);
       setUser(userData);
       setUserState(userData);
       toast.success(`Welcome back, ${userData.name}!`);
     } catch (error: any) {
-      const message = error.response?.data?.message || "Login failed";
+      const message = error.response?.data?.message || error.message || 'Login failed';
       toast.error(message);
       throw error;
     } finally {
@@ -105,14 +115,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
     try {
       const response = await authApi.register(data);
-      const { user: userData, token } = response.data.data || response.data;
+      const { user: userData, token } = extractAuthData(response.data);
 
-      setToken(token);
-      setUser(userData);
-      setUserState(userData);
-      toast.success("Account created successfully!");
+      if (token) {
+        setToken(token);
+        setUser(userData);
+        setUserState(userData);
+      }
+      toast.success('Account created successfully!');
     } catch (error: any) {
-      const message = error.response?.data?.message || "Registration failed";
+      const message = error.response?.data?.message || 'Registration failed';
       toast.error(message);
       throw error;
     } finally {
@@ -124,11 +136,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await authApi.logout();
     } catch {
-      // Ignore logout errors
+      // Ignore API errors during logout
     } finally {
       clearAuth();
       setUserState(null);
-      toast.success("Logged out successfully");
+      toast.success('Logged out successfully');
     }
   };
 
@@ -142,7 +154,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         user,
         isLoading,
-        isAuthenticated,
+        isAuthenticated: !!user,
         login,
         register,
         logout,
@@ -158,7 +170,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider");
+    throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
 }

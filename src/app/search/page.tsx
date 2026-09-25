@@ -3,7 +3,8 @@
 import React, { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Hotel, PaginatedResponse } from '@/types';
-import { hotelsApi } from '@/lib/api';
+import { availabilityApi, hotelsApi } from '@/lib/api';
+import { generateBookingDates } from '@/lib/utils';
 import SearchBar from '@/components/layout/SearchBar';
 import HotelCard from '@/components/hotels/HotelCard';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
@@ -13,6 +14,8 @@ import { cn } from '@/lib/utils';
 
 function SearchContent() {
   const searchParams = useSearchParams();
+  const { defaultCheckIn, defaultCheckOut } = generateBookingDates();
+
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [meta, setMeta] = useState<PaginatedResponse<Hotel>['meta'] | null>(null);
@@ -28,34 +31,57 @@ function SearchContent() {
   const fetchHotels = useCallback(async (page: number = 1) => {
     setIsLoading(true);
     try {
-      const params: Record<string, any> = {
-        page,
-        per_page: 12,
-      };
-
       const city = searchParams.get('city');
       const checkIn = searchParams.get('check_in');
       const checkOut = searchParams.get('check_out');
       const guests = searchParams.get('guests');
 
-      if (city) params.city = city;
+      const params: Record<string, any> = {
+        page,
+        per_page: 12,
+      };
+
+      if (city && city.trim() !== '') params.city = city.trim();
       if (checkIn) params.check_in = checkIn;
       if (checkOut) params.check_out = checkOut;
-      if (guests) params.guests = guests;
+      if (guests) params.guests = parseInt(String(guests));
       if (sortBy) params.sort_by = sortBy;
       if (minPrice) params.min_price = minPrice;
       if (maxPrice) params.max_price = maxPrice;
       if (stars) params.stars = stars;
 
-      const response = await hotelsApi.search(params);
-      const data = response.data;
+      let response;
+      // If user performed an explicit search with city or dates
+      if (city || (checkIn && checkOut)) {
+        response = await availabilityApi.search(params);
+      } else {
+        // Direct browsing: fetch all hotels
+        response = await hotelsApi.list(params);
+      }
 
-      setHotels(data.data || []);
-      setMeta(data.meta || null);
+      const raw = response.data;
+
+      if (Array.isArray(raw)) {
+        setHotels(raw);
+        setMeta(null);
+      } else if (raw?.data && Array.isArray(raw.data)) {
+        setHotels(raw.data);
+        setMeta(raw.meta || null);
+      } else {
+        setHotels([]);
+      }
+
       setCurrentPage(page);
     } catch (error) {
-      console.error('Search failed:', error);
-      setHotels([]);
+      console.error('Search error:', error);
+      // Final fallback to hotels list
+      try {
+        const fallbackRes = await hotelsApi.list({ page, per_page: 12 });
+        const fallbackData = fallbackRes.data?.data || fallbackRes.data;
+        setHotels(Array.isArray(fallbackData) ? fallbackData : []);
+      } catch {
+        setHotels([]);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -77,7 +103,7 @@ function SearchContent() {
     setStars('');
   };
 
-  const hasActiveFilters = sortBy || minPrice || maxPrice || stars;
+  const hasActiveFilters = Boolean(sortBy || minPrice || maxPrice || stars);
 
   return (
     <div className="min-h-screen bg-secondary-50">
@@ -88,8 +114,8 @@ function SearchContent() {
             variant="compact"
             defaultValues={{
               city: searchParams.get('city') || '',
-              check_in: searchParams.get('check_in') || undefined,
-              check_out: searchParams.get('check_out') || undefined,
+              check_in: searchParams.get('check_in') || defaultCheckIn,
+              check_out: searchParams.get('check_out') || defaultCheckOut,
               guests: searchParams.get('guests') ? parseInt(searchParams.get('guests')!) : 2,
             }}
           />
@@ -105,9 +131,13 @@ function SearchContent() {
                 ? `Hotels in ${searchParams.get('city')}`
                 : 'All Hotels'}
             </h1>
-            {meta && (
+            {meta ? (
               <p className="text-sm text-secondary-500 mt-1">
                 {meta.total} {meta.total === 1 ? 'hotel' : 'hotels'} found
+              </p>
+            ) : (
+              <p className="text-sm text-secondary-500 mt-1">
+                {hotels.length} {hotels.length === 1 ? 'hotel' : 'hotels'} available
               </p>
             )}
           </div>
@@ -165,7 +195,6 @@ function SearchContent() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {/* Price Range */}
               <div>
                 <label className="block text-xs font-medium text-secondary-500 mb-1.5">
                   Price Range
@@ -189,7 +218,6 @@ function SearchContent() {
                 </div>
               </div>
 
-              {/* Star Rating */}
               <div>
                 <label className="block text-xs font-medium text-secondary-500 mb-1.5">
                   Star Rating
@@ -207,7 +235,6 @@ function SearchContent() {
                 </select>
               </div>
 
-              {/* Apply */}
               <div className="flex items-end">
                 <Button onClick={() => fetchHotels(1)} fullWidth>
                   Apply Filters
@@ -220,7 +247,7 @@ function SearchContent() {
         {/* Results */}
         {isLoading ? (
           <div className="flex justify-center py-20">
-            <LoadingSpinner size="lg" message="Searching hotels..." />
+            <LoadingSpinner size="lg" message="Loading hotels..." />
           </div>
         ) : hotels.length > 0 ? (
           <>
@@ -243,7 +270,7 @@ function SearchContent() {
                 </Button>
 
                 {Array.from({ length: meta.last_page }, (_, i) => i + 1)
-                  .filter(page => {
+                  .filter((page) => {
                     if (meta.last_page <= 7) return true;
                     if (page === 1 || page === meta.last_page) return true;
                     if (Math.abs(page - currentPage) <= 1) return true;

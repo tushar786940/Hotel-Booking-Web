@@ -10,7 +10,7 @@ import { HiOutlineBuildingOffice2 } from 'react-icons/hi2';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 
 function LoginForm() {
-  const { login, isLoading } = useAuth();
+  const { login } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get('redirect') || '/';
@@ -18,6 +18,7 @@ function LoginForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const validate = () => {
@@ -33,11 +34,14 @@ function LoginForm() {
     e.preventDefault();
     if (!validate()) return;
 
+    setIsSubmitting(true);
     try {
       await login(email, password);
       router.push(redirectTo);
     } catch {
-      // Error handled in context
+      // Error is handled with toast in AuthContext
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -102,7 +106,7 @@ function LoginForm() {
               type="submit"
               fullWidth
               size="lg"
-              isLoading={isLoading}
+              isLoading={isSubmitting}
             >
               Sign In
             </Button>

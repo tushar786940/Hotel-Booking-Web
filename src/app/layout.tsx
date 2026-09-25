@@ -20,7 +20,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" data-scroll-behavior="smooth">
       <body>
         <AuthProvider>
           <div className="min-h-screen flex flex-col">
@@ -38,18 +38,6 @@ export default function RootLayout({
                 borderRadius: '12px',
                 padding: '12px 16px',
                 fontSize: '14px',
-              },
-              success: {
-                iconTheme: {
-                  primary: '#22c55e',
-                  secondary: '#f0fdf4',
-                },
-              },
-              error: {
-                iconTheme: {
-                  primary: '#ef4444',
-                  secondary: '#fef2f2',
-                },
               },
             }}
           />
