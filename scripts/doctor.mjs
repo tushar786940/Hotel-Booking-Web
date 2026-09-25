@@ -142,12 +142,31 @@ if (!hotels.length) {
     dim(`content-type: ${directProbe.res.headers.get('content-type') ?? '(none)'}`);
     dim(`first bytes : ${preview(directProbe.buffer) || '(empty)'}`);
     dim('next/image sniffs magic bytes, so it reports this as "received null".');
+    const file = decodeURIComponent(direct.split('/').pop().split('?')[0]);
+    const rel = new URL(direct).pathname.replace(/^\/storage\//, '');
+    const win = process.platform === 'win32';
+
     remedies.push(
-      'API: /storage/... is not serving the file. In the API directory:\n' +
-      '      php artisan storage:link      # creates public/storage\n' +
-      '    and confirm the upload went to the PUBLIC disk — .env.example ships\n' +
-      '    FILESYSTEM_DISK=local, which is not web-accessible. The file should\n' +
-      '    exist at storage/app/public/<the path above>.',
+      `API: nothing is served at /storage/${rel}. Work out which case you are in\n` +
+      '    by finding the file. Run this in the API directory:\n\n' +
+      (win
+        ? `      Get-ChildItem -Recurse -Filter "${file}" storage\\\n\n`
+        : `      find storage -name "${file}"\n\n`) +
+      '    (a) Found under storage/app/private/ — it was written to the `local`\n' +
+      '        disk. Laravel 11+ maps `local` to app/private and the API\'s\n' +
+      '        .env.example ships FILESYSTEM_DISK=local, so an upload with no\n' +
+      '        explicit disk lands somewhere the web can never reach. Pin it:\n' +
+      '            FileUpload::make(\'images\')->disk(\'public\')->directory(\'hotels\')\n' +
+      '        then move the existing files to storage/app/public/hotels/.\n\n' +
+      '    (b) Found under storage/app/public/ — right disk, missing symlink:\n' +
+      '            php artisan storage:link\n' +
+      (win
+        ? '        On Windows that needs an elevated PowerShell, or Developer\n' +
+          '        Mode enabled. Without admin rights, make a junction instead:\n' +
+          '            cmd /c mklink /J "public\\storage" "storage\\app\\public"\n\n'
+        : '\n') +
+      '    (c) Not found at all — the upload never persisted; re-add the image\n' +
+      '        once (a) is in place.',
     );
   }
 
