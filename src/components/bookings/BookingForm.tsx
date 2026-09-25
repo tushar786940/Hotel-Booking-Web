@@ -4,11 +4,16 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RoomType, Hotel } from '@/types';
 import { useAuth } from '@/context/AuthContext';
-import { bookingsApi, isFutureDate } from '@/lib/api';
+import {
+  bookingsApi,
+  getApiErrorMessage,
+  isFutureDate,
+  isNoRoomsAvailableError,
+} from '@/lib/api';
 import { calculatePricing, formatCurrency, calculateNights, getRoomPrice } from '@/lib/utils';
 import Button from '@/components/ui/Button';
 import toast from 'react-hot-toast';
-import { FiCalendar, FiUsers, FiCreditCard } from 'react-icons/fi';
+import { FiCalendar, FiUsers, FiCreditCard, FiAlertCircle } from 'react-icons/fi';
 
 interface BookingFormProps {
   hotel: Hotel;
@@ -17,6 +22,12 @@ interface BookingFormProps {
   checkOut: string;
   guests?: number;
   onClose?: () => void;
+  /**
+   * Called when the API rejects the booking because the room type is fully
+   * booked, so the parent can refresh availability and flip the card to
+   * "Sold Out" instead of leaving a button that cannot succeed.
+   */
+  onSoldOut?: () => void;
 }
 
 export default function BookingForm({
@@ -26,6 +37,7 @@ export default function BookingForm({
   checkOut,
   guests: initialGuests = 1,
   onClose,
+  onSoldOut,
 }: BookingFormProps) {
   const { isAuthenticated } = useAuth();
   const router = useRouter();
@@ -33,6 +45,8 @@ export default function BookingForm({
   const [guests, setGuests] = useState(Math.min(Math.max(initialGuests, 1), capacity));
   const [specialRequests, setSpecialRequests] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [soldOut, setSoldOut] = useState(false);
 
   // Mirrors PricingService: base + 20% per extra guest over 2, then 12% tax.
   const nights = calculateNights(checkIn, checkOut);
@@ -41,6 +55,7 @@ export default function BookingForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
 
     if (!isAuthenticated) {
       toast.error('Please log in to make a booking');
@@ -48,14 +63,21 @@ export default function BookingForm({
       return;
     }
 
-    // The API validates `check_in` with `after:today`.
+    // Mirror the server-side rules so obvious mistakes never cost a round trip.
+    // The API validates `check_in` with `after:today` in ITS timezone, so this
+    // is a fast path, not a guarantee -- the server is still authoritative.
     if (!isFutureDate(checkIn)) {
-      toast.error('Check-in must be a date after today');
+      setError('Check-in must be a date after today.');
       return;
     }
 
     if (checkOut <= checkIn) {
-      toast.error('Check-out must be after check-in');
+      setError('Check-out must be after check-in.');
+      return;
+    }
+
+    if (guests > capacity) {
+      setError(`This room sleeps ${capacity}. Choose a larger room type.`);
       return;
     }
 
@@ -74,9 +96,26 @@ export default function BookingForm({
       const booking = response.data?.data ?? response.data;
       toast.success('Booking created successfully!');
       router.push(`/bookings/${booking.id}`);
-    } catch (error) {
-      // Validation errors are surfaced by the axios interceptor.
-      console.error('Booking error:', error);
+    } catch (err) {
+      /**
+       * The most common 422 here is not a malformed field -- it is
+       * BookingService failing to find a free room, which surfaces as
+       * `errors.room_type_id: ["No rooms available for the selected dates."]`.
+       *
+       * The hotel detail response cannot predict this: RoomTypeResource only
+       * exposes `available_rooms` when rooms are eager-loaded, and
+       * HotelController@show does not load them. So we correct the UI here.
+       */
+      if (isNoRoomsAvailableError(err)) {
+        setSoldOut(true);
+        setError(
+          'Those dates just sold out for this room type. Pick different dates or another room.',
+        );
+        onSoldOut?.();
+      } else {
+        setError(getApiErrorMessage(err, 'Could not create the booking.'));
+      }
+      console.error('Booking error:', err);
     } finally {
       setIsSubmitting(false);
     }
@@ -174,15 +213,31 @@ export default function BookingForm({
           </div>
         </div>
 
+        {/* Error */}
+        {error && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-lg border border-danger-200 bg-danger-50 px-3 py-2.5"
+          >
+            <FiAlertCircle className="mt-0.5 flex-shrink-0 text-danger-500" />
+            <p className="text-sm text-danger-700">{error}</p>
+          </div>
+        )}
+
         {/* Submit */}
         <Button
           type="submit"
           fullWidth
           size="lg"
           isLoading={isSubmitting}
+          disabled={soldOut}
           leftIcon={<FiCreditCard />}
         >
-          {isAuthenticated ? 'Confirm Booking' : 'Login to Book'}
+          {!isAuthenticated
+            ? 'Login to Book'
+            : soldOut
+            ? 'Sold Out for These Dates'
+            : 'Confirm Booking'}
         </Button>
 
         {onClose && (

@@ -48,6 +48,23 @@ const reviews = [
   { id: 3, hotel_id: 3, user_id: 2, booking_id: null, rating: 5, comment: 'Woke up to the sea every morning. Worth every penny.', created_at: '1 month ago' },
 ];
 
+// Physical Room records — the seeder and RoomTypeController@store auto-generate
+// these from `total_rooms` (D001, D002, …). Bookings attach to a Room, not a RoomType.
+const rooms = [];
+for (const rt of roomTypes) {
+  const prefix = rt.name[0].toUpperCase();
+  for (let i = 1; i <= rt.total_rooms; i++) {
+    rooms.push({
+      id: rooms.length + 1,
+      room_type_id: rt.id,
+      room_number: `${prefix}${String(i).padStart(3, '0')}`,
+      floor: Math.ceil(i / 4),
+      status: 'available',
+      is_available: true,
+    });
+  }
+}
+
 const bookings = [];
 const payments = [];
 const tokens = new Map(); // token -> userId
@@ -81,6 +98,40 @@ const nightsBetween = (a, b) =>
   Math.round((parseDate(b) - parseDate(a)) / 86400000);
 
 const roomTypesOf = (hotelId) => roomTypes.filter((r) => r.hotel_id === hotelId);
+
+/**
+ * Mirrors App\Models\Room::isAvailableForDates().
+ * Both whereBetween() calls are INCLUSIVE on each end, so a stay that starts on
+ * the day another stay ends is treated as a conflict (no same-day turnover).
+ */
+const roomIsFree = (room, checkIn, checkOut) =>
+  !bookings.some((b) => {
+    if (b.room_id !== room.id) return false;
+    if (['cancelled', 'refunded'].includes(b.status)) return false;
+    const startsWithin = b.check_in >= checkIn && b.check_in <= checkOut;
+    const endsWithin = b.check_out >= checkIn && b.check_out <= checkOut;
+    const wraps = b.check_in <= checkIn && b.check_out >= checkOut;
+    return startsWithin || endsWithin || wraps;
+  });
+
+/** AvailabilityService::findAvailableRoom() */
+const findAvailableRoom = (roomTypeId, checkIn, checkOut) =>
+  rooms.find(
+    (r) =>
+      r.room_type_id === Number(roomTypeId) &&
+      r.is_available &&
+      r.status === 'available' &&
+      roomIsFree(r, checkIn, checkOut),
+  ) ?? null;
+
+const countAvailableRooms = (roomTypeId, checkIn, checkOut) =>
+  rooms.filter(
+    (r) =>
+      r.room_type_id === roomTypeId &&
+      r.is_available &&
+      r.status === 'available' &&
+      roomIsFree(r, checkIn, checkOut),
+  ).length;
 const avgRating = (hotelId) => {
   const list = reviews.filter((r) => r.hotel_id === hotelId);
   if (!list.length) return 0;
@@ -110,7 +161,11 @@ const breakdown = (roomType, nights, guests = 1) => {
 };
 
 // Resources
-const roomTypeResource = (rt, availableRooms) => ({
+/**
+ * RoomTypeResource. `available_rooms` is `whenLoaded('rooms')`, so it is OMITTED
+ * unless the caller eager-loaded rooms — HotelController@show does not.
+ */
+const roomTypeResource = (rt, { withRooms = false } = {}) => ({
   id: rt.id,
   name: rt.name,
   description: rt.description,
@@ -120,7 +175,13 @@ const roomTypeResource = (rt, availableRooms) => ({
   amenities: rt.amenities,
   cover_image: rt.images[0]?.thumbnail_url ?? null,
   images: rt.images,
-  available_rooms: availableRooms ?? rt.total_rooms,
+  ...(withRooms
+    ? {
+        available_rooms: rooms.filter(
+          (r) => r.room_type_id === rt.id && r.is_available && r.status === 'available',
+        ).length,
+      }
+    : {}),
 });
 
 const hotelResource = (h) => ({
@@ -149,6 +210,8 @@ const hotelDetailResource = (h) => ({
   zip_code: h.zip_code,
   latitude: h.latitude,
   longitude: h.longitude,
+  // HotelController@show eager-loads ['roomTypes', 'reviews'] — NOT roomTypes.rooms,
+  // so available_rooms is absent here.
   room_types: roomTypesOf(h.id).map((rt) => roomTypeResource(rt)),
   reviews: reviews
     .filter((r) => r.hotel_id === h.id)
@@ -428,28 +491,21 @@ route('GET', '/api/v1/hotels/{id}/availability', (req, res, params, _b, query) =
   const nights = nightsBetween(query.check_in, query.check_out);
   const guests = Number(query.guests || 1);
 
+  // AvailabilityService::getAvailableRoomTypes() — date-aware, and room types
+  // with zero availability are filtered OUT of the response entirely.
   const data = roomTypesOf(hotel.id)
-    .map((rt) => {
-      const booked = bookings.filter(
-        (b) =>
-          b.room_type_id === rt.id &&
-          !['cancelled', 'refunded'].includes(b.status) &&
-          b.check_in < query.check_out &&
-          b.check_out > query.check_in,
-      ).length;
-      return {
-        room_type: {
-          id: rt.id,
-          name: rt.name,
-          description: rt.description,
-          capacity: rt.capacity,
-          amenities: rt.amenities,
-          images: rt.images,
-        },
-        available_rooms: Math.max(rt.total_rooms - booked, 0),
-        pricing: breakdown(rt, nights, guests),
-      };
-    })
+    .map((rt) => ({
+      room_type: {
+        id: rt.id,
+        name: rt.name,
+        description: rt.description,
+        capacity: rt.capacity,
+        amenities: rt.amenities,
+        images: rt.images,
+      },
+      available_rooms: countAvailableRooms(rt.id, query.check_in, query.check_out),
+      pricing: breakdown(rt, nights, guests),
+    }))
     .filter((item) => item.available_rooms > 0);
 
   return json(res, 200, {
@@ -487,12 +543,25 @@ route('POST', '/api/v1/bookings', (req, res, _p, body) => {
   const roomType = roomTypes.find((r) => r.id === Number(body.room_type_id));
   if (!roomType) errors.room_type_id = ['The selected room type id is invalid.'];
   if (!body.guests_count) errors.guests_count = ['The guests count field is required.'];
+  else if (Number(body.guests_count) < 1 || Number(body.guests_count) > 10)
+    errors.guests_count = ['The guests count field must be between 1 and 10.'];
+  if (body.special_requests && String(body.special_requests).length > 500)
+    errors.special_requests = ['The special requests field must not be greater than 500 characters.'];
   if (Object.keys(errors).length)
     return fail(res, 422, 'The given data was invalid.', errors);
 
+  // BookingService::createBooking — STEP 1: find an available physical room.
+  // This is the 422 most people hit: the room type exists and passes validation,
+  // but every room of that type is taken for the requested dates.
+  const room = findAvailableRoom(roomType.id, body.check_in, body.check_out);
+  if (!room) {
+    return fail(res, 422, 'The given data was invalid.', {
+      room_type_id: ['No rooms available for the selected dates.'],
+    });
+  }
+
   const nights = nightsBetween(body.check_in, body.check_out);
   const total = breakdown(roomType, nights, Number(body.guests_count)).total;
-  const index = bookings.filter((b) => b.room_type_id === roomType.id).length + 1;
 
   const booking = {
     id: nextId.booking++,
@@ -500,8 +569,9 @@ route('POST', '/api/v1/bookings', (req, res, _p, body) => {
     user_id: user.id,
     hotel_id: roomType.hotel_id,
     room_type_id: roomType.id,
-    room_number: `${roomType.name[0].toUpperCase()}${String(index).padStart(3, '0')}`,
-    floor: Math.ceil(index / 4),
+    room_id: room.id,
+    room_number: room.room_number,
+    floor: room.floor,
     check_in: body.check_in,
     check_out: body.check_out,
     guests_count: Number(body.guests_count),
@@ -670,7 +740,7 @@ route('GET', '/api/v1/manage/hotels', (req, res) => {
   return json(res, 200, {
     data: owned.map((h) => ({
       ...hotelResource(h),
-      room_types: roomTypesOf(h.id).map((rt) => roomTypeResource(rt)),
+      room_types: roomTypesOf(h.id).map((rt) => roomTypeResource(rt, { withRooms: true })),
       bookings_count: bookings.filter((b) => b.hotel_id === h.id).length,
     })),
   });
@@ -715,7 +785,7 @@ route('GET', '/api/v1/manage/hotels/{id}', (req, res, params) => {
       ...hotelResource(hotel),
       state: hotel.state,
       zip_code: hotel.zip_code,
-      room_types: roomTypesOf(hotel.id).map((rt) => roomTypeResource(rt)),
+      room_types: roomTypesOf(hotel.id).map((rt) => roomTypeResource(rt, { withRooms: true })),
     },
   });
 });
@@ -752,7 +822,9 @@ route('GET', '/api/v1/manage/hotels/{id}/room-types', (req, res, params) => {
   if (!user) return;
   const hotel = hotels.find((h) => String(h.id) === params.id);
   if (!hotel) return fail(res, 404, 'Not found.');
-  return json(res, 200, { data: roomTypesOf(hotel.id).map((rt) => roomTypeResource(rt)) });
+  return json(res, 200, {
+    data: roomTypesOf(hotel.id).map((rt) => roomTypeResource(rt, { withRooms: true })),
+  });
 });
 
 route('GET', '/api/v1/manage/hotels/{id}/bookings', (req, res, params, _b, query) => {

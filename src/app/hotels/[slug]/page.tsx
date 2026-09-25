@@ -351,12 +351,16 @@ export default function HotelDetailPage() {
             <div className="sticky top-24">
               {showBookingForm && selectedRoom ? (
                 <BookingForm
+                  /* Remount on date/room change so a stale "sold out" state
+                     from a previous attempt does not stick. */
+                  key={`${selectedRoom.id}-${checkIn}-${checkOut}`}
                   hotel={hotel}
                   roomType={selectedRoom}
                   checkIn={checkIn}
                   checkOut={checkOut}
                   guests={guests}
                   onClose={() => setShowBookingForm(false)}
+                  onSoldOut={checkAvailability}
                 />
               ) : (
                 <div className="bg-white rounded-2xl border border-secondary-100 p-6">

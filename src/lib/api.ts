@@ -121,6 +121,50 @@ function clean(params?: QueryParams): QueryParams {
   return result;
 }
 
+/**
+ * Pull a human-readable message out of a Laravel error response.
+ *
+ * A 422 can be either a field-validation failure
+ *   { message, errors: { check_in: ["The check in field must be a date after today."] } }
+ * or a business-rule rejection thrown from a service as a ValidationException
+ *   { message, errors: { room_type_id: ["No rooms available for the selected dates."] } }
+ *
+ * Both matter to the user, so prefer the specific field error over the generic
+ * "The given data was invalid." wrapper.
+ */
+export function getApiErrorMessage(error: unknown, fallback = "Something went wrong"): string {
+  const axiosError = error as AxiosError<{
+    message?: string;
+    errors?: Record<string, string[]>;
+  }>;
+  const data = axiosError?.response?.data;
+
+  if (data?.errors) {
+    const first = Object.values(data.errors)[0];
+    if (first?.[0]) return first[0];
+  }
+
+  if (data?.message) return data.message;
+  if (!axiosError?.response && axiosError?.request) {
+    return "Unable to reach the server. Is the API running?";
+  }
+
+  return fallback;
+}
+
+/**
+ * True when the API rejected a booking because every room of that type is
+ * taken for the requested dates (BookingService::createBooking step 1) rather
+ * than because a field was malformed.
+ */
+export function isNoRoomsAvailableError(error: unknown): boolean {
+  const axiosError = error as AxiosError<{ errors?: Record<string, string[]> }>;
+  if (axiosError?.response?.status !== 422) return false;
+
+  const roomTypeErrors = axiosError.response.data?.errors?.room_type_id;
+  return Boolean(roomTypeErrors?.some((m) => /no rooms available/i.test(m)));
+}
+
 /** `GET /search` requires `check_in` to be strictly after today. */
 export function isFutureDate(value?: string | null): boolean {
   if (!value) return false;
