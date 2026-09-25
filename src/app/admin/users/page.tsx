@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import Link from 'next/link';
+import { API_ORIGIN } from '@/lib/config';
 
 export default function AdminUsersPage() {
   return (
@@ -14,7 +14,7 @@ export default function AdminUsersPage() {
           User management is available through the Filament Admin Panel.
         </p>
         <a
-          href="http://localhost:8000/admin"
+          href={`${API_ORIGIN}/admin`}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-medium hover:bg-primary-700 transition-colors"

@@ -1,33 +1,98 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Booking } from '@/types';
-import { paymentsApi } from '@/lib/api';
+import { Booking, PaymentIntent, PaymentStatusResponse } from '@/types';
+import { getApiErrorMessage, getApiErrorStatus, paymentsApi } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 import Button from '@/components/ui/Button';
 import toast from 'react-hot-toast';
-import { FiCreditCard, FiShield } from 'react-icons/fi';
-import { FaStripe, FaPaypal } from 'react-icons/fa';
+import {
+  FiCreditCard,
+  FiShield,
+  FiRefreshCw,
+  FiExternalLink,
+  FiAlertCircle,
+} from 'react-icons/fi';
+import { FaStripe } from 'react-icons/fa';
 
 interface PaymentFormProps {
   booking: Booking;
   onPaymentSuccess: () => void;
 }
 
+/**
+ * Payment flow implemented by the API (PaymentController + WebhookController):
+ *
+ *   1. POST /bookings/{id}/pay  → creates a Stripe PaymentIntent and returns
+ *                                 { client_secret, payment_id, amount }
+ *   2. The card is charged through Stripe using that client_secret.
+ *   3. Stripe calls POST /webhooks/stripe, which marks the payment as
+ *      `completed` and the booking as `confirmed`.
+ *
+ * So this component never "completes" a payment itself — it creates the
+ * intent and then polls GET /bookings/{id}/payment-status.
+ */
 export default function PaymentForm({ booking, onPaymentSuccess }: PaymentFormProps) {
-  const [method, setMethod] = useState<'stripe' | 'paypal'>('stripe');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
+  const [intent, setIntent] = useState<PaymentIntent | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [gatewayDown, setGatewayDown] = useState(false);
 
-  const handlePayment = async () => {
+  const handleCreateIntent = async () => {
     setIsProcessing(true);
+    setError(null);
     try {
-      await paymentsApi.pay(booking.id, { method });
-      toast.success('Payment completed successfully!');
-      onPaymentSuccess();
-    } catch (error: any) {
-      console.error('Payment error:', error);
+      const response = await paymentsApi.pay(booking.id);
+      const data: PaymentIntent = response.data?.data ?? response.data;
+      setIntent(data);
+      toast.success('Payment started — complete the card payment to confirm.');
+    } catch (err) {
+      const status = getApiErrorStatus(err);
+
+      /**
+       * A 5xx here is not something the guest can fix by retrying.
+       * `PaymentService` calls `Stripe::setApiKey(config('services.stripe.secret'))`
+       * and then `PaymentIntent::create()`. If STRIPE_SECRET is unset the SDK
+       * throws AuthenticationException, and neither the service, the
+       * controller nor `bootstrap/app.php` catches it — so it escapes as a
+       * bare 500. Say so, rather than inviting the guest to try again.
+       */
+      if (status >= 500) {
+        setGatewayDown(true);
+        setError(
+          'Payments are unavailable right now — the server could not reach the payment provider. ' +
+            'Your booking is safe and still held; nothing has been charged.',
+        );
+      } else if (status === 0) {
+        setError('Could not reach the server. Check your connection and try again.');
+      } else {
+        setError(getApiErrorMessage(err, 'Could not start the payment.'));
+      }
+
+      console.error('Payment error:', err);
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleCheckStatus = async () => {
+    setIsChecking(true);
+    try {
+      const response = await paymentsApi.getStatus(booking.id);
+      const data: PaymentStatusResponse = response.data?.data ?? response.data;
+
+      if (data?.payment?.status === 'completed') {
+        toast.success('Payment confirmed!');
+        onPaymentSuccess();
+      } else {
+        toast('Payment is still pending.', { icon: '⏳' });
+      }
+    } catch (err) {
+      setError(getApiErrorMessage(err, 'Could not check the payment status.'));
+      console.error('Payment status error:', err);
+    } finally {
+      setIsChecking(false);
     }
   };
 
@@ -45,77 +110,74 @@ export default function PaymentForm({ booking, onPaymentSuccess }: PaymentFormPr
         </p>
       </div>
 
-      <div className="space-y-3 mb-6">
-        <p className="text-sm font-medium text-secondary-700">Select Payment Method</p>
-
-        <label
-          className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-            method === 'stripe'
-              ? 'border-primary-500 bg-primary-50'
-              : 'border-secondary-200 hover:border-secondary-300'
-          }`}
-        >
-          <input
-            type="radio"
-            name="method"
-            value="stripe"
-            checked={method === 'stripe'}
-            onChange={() => setMethod('stripe')}
-            className="sr-only"
-          />
-          <FaStripe className="text-3xl text-[#635bff]" />
-          <div className="flex-1">
-            <p className="font-medium text-secondary-900">Credit / Debit Card</p>
-            <p className="text-xs text-secondary-500">Pay securely with Stripe</p>
-          </div>
-          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-            method === 'stripe' ? 'border-primary-500' : 'border-secondary-300'
-          }`}>
-            {method === 'stripe' && (
-              <div className="w-3 h-3 rounded-full bg-primary-500" />
-            )}
-          </div>
-        </label>
-
-        <label
-          className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-            method === 'paypal'
-              ? 'border-primary-500 bg-primary-50'
-              : 'border-secondary-200 hover:border-secondary-300'
-          }`}
-        >
-          <input
-            type="radio"
-            name="method"
-            value="paypal"
-            checked={method === 'paypal'}
-            onChange={() => setMethod('paypal')}
-            className="sr-only"
-          />
-          <FaPaypal className="text-3xl text-[#003087]" />
-          <div className="flex-1">
-            <p className="font-medium text-secondary-900">PayPal</p>
-            <p className="text-xs text-secondary-500">Pay with your PayPal account</p>
-          </div>
-          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-            method === 'paypal' ? 'border-primary-500' : 'border-secondary-300'
-          }`}>
-            {method === 'paypal' && (
-              <div className="w-3 h-3 rounded-full bg-primary-500" />
-            )}
-          </div>
-        </label>
+      <div className="flex items-center gap-4 p-4 rounded-xl border-2 border-primary-500 bg-primary-50 mb-6">
+        <FaStripe className="text-3xl text-[#635bff]" />
+        <div className="flex-1">
+          <p className="font-medium text-secondary-900">Credit / Debit Card</p>
+          <p className="text-xs text-secondary-500">
+            Processed securely by Stripe
+          </p>
+        </div>
       </div>
 
-      <Button
-        onClick={handlePayment}
-        isLoading={isProcessing}
-        fullWidth
-        size="lg"
-        leftIcon={<FiCreditCard />}
-      >
-        Pay {formatCurrency(booking.total_price)}
-      </Button>
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-danger-200 bg-danger-50 px-3 py-2.5 mb-4"
+        >
+          <FiAlertCircle className="mt-0.5 flex-shrink-0 text-danger-500" />
+          <div className="text-sm text-danger-700">
+            <p>{error}</p>
+            {gatewayDown && (
+              <p className="mt-1 text-xs text-danger-600">
+                If you are running this API yourself, set <code>STRIPE_SECRET</code> in
+                its <code>.env</code> and restart it.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {intent ? (
+        <div className="space-y-4">
+          <div className="rounded-xl bg-secondary-50 border border-secondary-100 p-4 space-y-1">
+            <p className="text-sm font-medium text-secondary-900">
+              Payment intent created
+            </p>
+            <p className="text-xs text-secondary-500">
+              Reference:{' '}
+              <span className="font-mono text-secondary-700">{intent.payment_id}</span>
+            </p>
+            <p className="text-xs text-secondary-500">
+              Finish the card payment with Stripe. Your booking is confirmed
+              automatically as soon as Stripe notifies the API.
+            </p>
+          </div>
+
+          <Button
+            onClick={handleCheckStatus}
+            isLoading={isChecking}
+            variant="outline"
+            fullWidth
+            leftIcon={<FiRefreshCw />}
+          >
+            I&apos;ve paid — refresh status
+          </Button>
+        </div>
+      ) : (
+        <Button
+          onClick={handleCreateIntent}
+          isLoading={isProcessing}
+          disabled={gatewayDown}
+          fullWidth
+          size="lg"
+          leftIcon={<FiExternalLink />}
+        >
+          {gatewayDown
+            ? 'Payments unavailable'
+            : `Pay ${formatCurrency(booking.total_price)}`}
+        </Button>
+      )}
 
       <div className="flex items-center justify-center gap-2 mt-4 text-xs text-secondary-400">
         <FiShield className="text-success-500" />

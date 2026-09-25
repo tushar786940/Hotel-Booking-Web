@@ -4,37 +4,72 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RoomType, Hotel } from '@/types';
 import { useAuth } from '@/context/AuthContext';
-import { bookingsApi } from '@/lib/api';
-import { formatCurrency, calculateNights, getRoomPrice } from '@/lib/utils';
+import {
+  bookingsApi,
+  getApiErrorMessage,
+  isFutureDate,
+  isNoRoomsAvailableError,
+} from '@/lib/api';
+import {
+  calculatePricing,
+  formatCurrency,
+  calculateNights,
+  getRoomPrice,
+  getRoomCapacity,
+  guestOptions,
+  parseGuests,
+} from '@/lib/utils';
 import Button from '@/components/ui/Button';
 import toast from 'react-hot-toast';
-import { FiCalendar, FiUsers, FiCreditCard } from 'react-icons/fi';
+import { FiCalendar, FiUsers, FiCreditCard, FiAlertCircle } from 'react-icons/fi';
 
 interface BookingFormProps {
   hotel: Hotel;
   roomType: RoomType;
   checkIn: string;
   checkOut: string;
+  /**
+   * Controlled from the page so this picker and the "check availability"
+   * picker above it can never drift apart.
+   */
+  guests: number;
+  onGuestsChange?: (guests: number) => void;
   onClose?: () => void;
+  /**
+   * Called when the API rejects the booking because the room type is fully
+   * booked, so the parent can refresh availability and flip the card to
+   * "Sold Out" instead of leaving a button that cannot succeed.
+   */
+  onSoldOut?: () => void;
 }
 
-export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClose }: BookingFormProps) {
+export default function BookingForm({
+  hotel,
+  roomType,
+  checkIn,
+  checkOut,
+  guests,
+  onGuestsChange,
+  onClose,
+  onSoldOut,
+}: BookingFormProps) {
   const { isAuthenticated } = useAuth();
   const router = useRouter();
-  const [guests, setGuests] = useState(2);
+  const capacity = getRoomCapacity(roomType);
+  const exceedsCapacity = guests > capacity;
   const [specialRequests, setSpecialRequests] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [soldOut, setSoldOut] = useState(false);
 
-  // Price & Nights calculation
+  // Mirrors PricingService: base + 20% per extra guest over 2, then 12% tax.
   const nights = calculateNights(checkIn, checkOut);
-  const validNights = Math.max(nights, 1);
   const roomPrice = getRoomPrice(roomType);
-  const subtotal = roomPrice * validNights;
-  const taxes = subtotal * 0.12; // 12% tax
-  const total = subtotal + taxes;
+  const pricing = calculatePricing(roomPrice, nights, guests);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
 
     if (!isAuthenticated) {
       toast.error('Please log in to make a booking');
@@ -42,27 +77,64 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
       return;
     }
 
-    if (nights <= 0) {
-      toast.error('Please select valid check-in and check-out dates');
+    // Mirror the server-side rules so obvious mistakes never cost a round trip.
+    // The API validates `check_in` with `after:today` in ITS timezone, so this
+    // is a fast path, not a guarantee -- the server is still authoritative.
+    if (!isFutureDate(checkIn)) {
+      setError('Check-in must be a date after today.');
+      return;
+    }
+
+    if (checkOut <= checkIn) {
+      setError('Check-out must be after check-in.');
+      return;
+    }
+
+    if (exceedsCapacity) {
+      setError(
+        `This room sleeps ${capacity}. Reduce the party size or pick a larger room type.`,
+      );
       return;
     }
 
     setIsSubmitting(true);
     try {
+      // POST /bookings → { room_type_id, check_in, check_out, guests_count,
+      // special_requests }. The API resolves the hotel and a free room itself.
       const response = await bookingsApi.create({
-        hotel_id: hotel.id,
         room_type_id: roomType.id,
         check_in: checkIn,
         check_out: checkOut,
-        guests,
+        // parseGuests guarantees a finite 1-10 integer. Without it a NaN here
+        // serialises to null and the API replies "The guests count field is
+        // required.", which reads like a missing field rather than a bad one.
+        guests_count: parseGuests(guests),
         special_requests: specialRequests || undefined,
       });
 
-      const booking = response.data?.data || response.data;
+      const booking = response.data?.data ?? response.data;
       toast.success('Booking created successfully!');
       router.push(`/bookings/${booking.id}`);
-    } catch (error: any) {
-      console.error('Booking error:', error);
+    } catch (err) {
+      /**
+       * The most common 422 here is not a malformed field -- it is
+       * BookingService failing to find a free room, which surfaces as
+       * `errors.room_type_id: ["No rooms available for the selected dates."]`.
+       *
+       * The hotel detail response cannot predict this: RoomTypeResource only
+       * exposes `available_rooms` when rooms are eager-loaded, and
+       * HotelController@show does not load them. So we correct the UI here.
+       */
+      if (isNoRoomsAvailableError(err)) {
+        setSoldOut(true);
+        setError(
+          'Those dates just sold out for this room type. Pick different dates or another room.',
+        );
+        onSoldOut?.();
+      } else {
+        setError(getApiErrorMessage(err, 'Could not create the booking.'));
+      }
+      console.error('Booking error:', err);
     } finally {
       setIsSubmitting(false);
     }
@@ -104,17 +176,28 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
             <FiUsers className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400" />
             <select
               value={guests}
-              onChange={(e) => setGuests(parseInt(e.target.value))}
+              onChange={(e) => onGuestsChange?.(parseGuests(e.target.value, guests))}
               className="w-full pl-10 pr-4 py-2.5 bg-secondary-50 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
-              {Array.from({ length: roomType.max_guests || 2 }, (_, i) => i + 1).map((n) => (
-                <option key={n} value={n}>
+              {/* Same options as the picker above; the ones this room cannot
+                  take are shown but disabled, so the mismatch is visible
+                  rather than the list silently being shorter. */}
+              {guestOptions().map((n) => (
+                <option key={n} value={n} disabled={n > capacity}>
                   {n} {n === 1 ? 'Guest' : 'Guests'}
+                  {n > capacity ? ' — over room capacity' : ''}
                 </option>
               ))}
             </select>
           </div>
         </div>
+
+        {exceedsCapacity && (
+          <p className="-mt-2 text-xs font-medium text-amber-600">
+            {roomType.name} sleeps {capacity}. Choose {capacity} or fewer guests, or
+            pick a larger room type.
+          </p>
+        )}
 
         {/* Special Requests */}
         <div>
@@ -125,6 +208,7 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
             value={specialRequests}
             onChange={(e) => setSpecialRequests(e.target.value)}
             rows={3}
+            maxLength={500}
             placeholder="Any special requests for your stay..."
             className="w-full px-3 py-2.5 bg-secondary-50 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
           />
@@ -134,19 +218,41 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
         <div className="border-t border-secondary-100 pt-4 space-y-2">
           <div className="flex items-center justify-between text-sm">
             <span className="text-secondary-500">
-              {formatCurrency(roomPrice)} × {validNights} {validNights === 1 ? 'night' : 'nights'}
+              {formatCurrency(roomPrice)} × {pricing.nights}{' '}
+              {pricing.nights === 1 ? 'night' : 'nights'}
             </span>
-            <span className="text-secondary-700">{formatCurrency(subtotal)}</span>
+            <span className="text-secondary-700">{formatCurrency(pricing.base_price)}</span>
           </div>
+          {pricing.extra_guest_charge > 0 && (
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-secondary-500">
+                Extra {pricing.extra_guests === 1 ? 'guest' : 'guests'} ({pricing.extra_guests})
+              </span>
+              <span className="text-secondary-700">
+                {formatCurrency(pricing.extra_guest_charge)}
+              </span>
+            </div>
+          )}
           <div className="flex items-center justify-between text-sm">
-            <span className="text-secondary-500">Taxes & fees (12%)</span>
-            <span className="text-secondary-700">{formatCurrency(taxes)}</span>
+            <span className="text-secondary-500">Taxes &amp; fees ({pricing.tax_rate})</span>
+            <span className="text-secondary-700">{formatCurrency(pricing.tax)}</span>
           </div>
           <div className="flex items-center justify-between font-semibold text-lg pt-2 border-t border-secondary-100">
             <span className="text-secondary-900">Total</span>
-            <span className="text-primary-700">{formatCurrency(total)}</span>
+            <span className="text-primary-700">{formatCurrency(pricing.total)}</span>
           </div>
         </div>
+
+        {/* Error */}
+        {error && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-lg border border-danger-200 bg-danger-50 px-3 py-2.5"
+          >
+            <FiAlertCircle className="mt-0.5 flex-shrink-0 text-danger-500" />
+            <p className="text-sm text-danger-700">{error}</p>
+          </div>
+        )}
 
         {/* Submit */}
         <Button
@@ -154,24 +260,24 @@ export default function BookingForm({ hotel, roomType, checkIn, checkOut, onClos
           fullWidth
           size="lg"
           isLoading={isSubmitting}
+          disabled={soldOut || exceedsCapacity}
           leftIcon={<FiCreditCard />}
         >
-          {isAuthenticated ? 'Confirm Booking' : 'Login to Book'}
+          {!isAuthenticated
+            ? 'Login to Book'
+            : soldOut
+            ? 'Sold Out for These Dates'
+            : 'Confirm Booking'}
         </Button>
 
         {onClose && (
-          <Button
-            type="button"
-            variant="ghost"
-            fullWidth
-            onClick={onClose}
-          >
+          <Button type="button" variant="ghost" fullWidth onClick={onClose}>
             Cancel
           </Button>
         )}
 
         <p className="text-xs text-center text-secondary-400">
-          You won&apos;t be charged yet. Payment is processed after confirmation.
+          You won&apos;t be charged yet. Payment is taken after the booking is created.
         </p>
       </form>
     </div>

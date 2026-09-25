@@ -2,15 +2,51 @@
 
 import React, { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Hotel, PaginatedResponse } from '@/types';
-import { availabilityApi, hotelsApi } from '@/lib/api';
-import { generateBookingDates } from '@/lib/utils';
+import { Hotel, PaginationMeta, SearchFilters, SortBy, SortOrder } from '@/types';
+import { availabilityApi, canUseAvailabilitySearch } from '@/lib/api';
+import { generateBookingDates, getHotelMinPrice, parseGuests } from '@/lib/utils';
 import SearchBar from '@/components/layout/SearchBar';
 import HotelCard from '@/components/hotels/HotelCard';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Button from '@/components/ui/Button';
-import { FiFilter, FiX, FiChevronDown } from 'react-icons/fi';
+import { FiFilter, FiX, FiChevronDown, FiInfo } from 'react-icons/fi';
 import { cn } from '@/lib/utils';
+
+/**
+ * Sort values understood by `GET /hotels`:
+ *   sort_by=price&sort_order=asc|desc   |   sort_by=rating
+ * They are combined into a single select value here.
+ */
+const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: 'Sort by: Default' },
+  { value: 'price:asc', label: 'Price: Low to High' },
+  { value: 'price:desc', label: 'Price: High to Low' },
+  { value: 'rating', label: 'Highest Rated' },
+];
+
+function parseSort(value: string): { sort_by?: SortBy; sort_order?: SortOrder } {
+  if (!value) return {};
+  const [sortBy, sortOrder] = value.split(':');
+  return {
+    sort_by: sortBy as SortBy,
+    sort_order: (sortOrder as SortOrder) || undefined,
+  };
+}
+
+/** `GET /search` ignores sorting, so results are ordered client-side. */
+function sortHotels(hotels: Hotel[], sort: string): Hotel[] {
+  if (!sort) return hotels;
+  const sorted = [...hotels];
+
+  if (sort === 'rating') {
+    return sorted.sort((a, b) => (b.average_rating || 0) - (a.average_rating || 0));
+  }
+
+  const direction = sort === 'price:desc' ? -1 : 1;
+  return sorted.sort(
+    (a, b) => (getHotelMinPrice(a) - getHotelMinPrice(b)) * direction,
+  );
+}
 
 function SearchContent() {
   const searchParams = useSearchParams();
@@ -18,74 +54,65 @@ function SearchContent() {
 
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [meta, setMeta] = useState<PaginatedResponse<Hotel>['meta'] | null>(null);
+  const [meta, setMeta] = useState<PaginationMeta | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [availabilityMode, setAvailabilityMode] = useState(false);
 
-  // Filter states
-  const [sortBy, setSortBy] = useState(searchParams.get('sort_by') || '');
+  // Filter states (names match the API query parameters)
+  const [sort, setSort] = useState(() => {
+    const sortBy = searchParams.get('sort_by');
+    if (!sortBy) return '';
+    if (sortBy === 'rating') return 'rating';
+    return `price:${searchParams.get('sort_order') || 'asc'}`;
+  });
   const [minPrice, setMinPrice] = useState(searchParams.get('min_price') || '');
   const [maxPrice, setMaxPrice] = useState(searchParams.get('max_price') || '');
-  const [stars, setStars] = useState(searchParams.get('stars') || '');
+  const [starRating, setStarRating] = useState(
+    searchParams.get('star_rating') || searchParams.get('stars') || '',
+  );
   const [currentPage, setCurrentPage] = useState(parseInt(searchParams.get('page') || '1'));
 
-  const fetchHotels = useCallback(async (page: number = 1) => {
-    setIsLoading(true);
-    try {
-      const city = searchParams.get('city');
-      const checkIn = searchParams.get('check_in');
-      const checkOut = searchParams.get('check_out');
-      const guests = searchParams.get('guests');
+  const fetchHotels = useCallback(
+    async (page: number = 1) => {
+      setIsLoading(true);
 
-      const params: Record<string, any> = {
+      const filters: SearchFilters = {
+        city: searchParams.get('city')?.trim() || undefined,
+        check_in: searchParams.get('check_in') || undefined,
+        check_out: searchParams.get('check_out') || undefined,
+        guests: searchParams.get('guests')
+          ? parseGuests(searchParams.get('guests'))
+          : undefined,
+        min_price: minPrice ? Number(minPrice) : undefined,
+        max_price: maxPrice ? Number(maxPrice) : undefined,
+        star_rating: starRating ? Number(starRating) : undefined,
         page,
         per_page: 12,
+        ...parseSort(sort),
       };
 
-      if (city && city.trim() !== '') params.city = city.trim();
-      if (checkIn) params.check_in = checkIn;
-      if (checkOut) params.check_out = checkOut;
-      if (guests) params.guests = parseInt(String(guests));
-      if (sortBy) params.sort_by = sortBy;
-      if (minPrice) params.min_price = minPrice;
-      if (maxPrice) params.max_price = maxPrice;
-      if (stars) params.stars = stars;
+      const usesAvailability = canUseAvailabilitySearch(filters);
+      setAvailabilityMode(usesAvailability);
 
-      let response;
-      // If user performed an explicit search with city or dates
-      if (city || (checkIn && checkOut)) {
-        response = await availabilityApi.search(params);
-      } else {
-        // Direct browsing: fetch all hotels
-        response = await hotelsApi.list(params);
-      }
-
-      const raw = response.data;
-
-      if (Array.isArray(raw)) {
-        setHotels(raw);
-        setMeta(null);
-      } else if (raw?.data && Array.isArray(raw.data)) {
-        setHotels(raw.data);
-        setMeta(raw.meta || null);
-      } else {
-        setHotels([]);
-      }
-
-      setCurrentPage(page);
-    } catch (error) {
-      console.error('Search error:', error);
-      // Final fallback to hotels list
       try {
-        const fallbackRes = await hotelsApi.list({ page, per_page: 12 });
-        const fallbackData = fallbackRes.data?.data || fallbackRes.data;
-        setHotels(Array.isArray(fallbackData) ? fallbackData : []);
-      } catch {
+        // Falls back to GET /hotels when the date range is not bookable.
+        const response = await availabilityApi.search(filters);
+        const body = response.data;
+        const list: Hotel[] = Array.isArray(body) ? body : body?.data ?? [];
+
+        setHotels(usesAvailability ? sortHotels(list, sort) : list);
+        setMeta(body?.meta ?? null);
+        setCurrentPage(page);
+      } catch (error) {
+        console.error('Search error:', error);
         setHotels([]);
+        setMeta(null);
+      } finally {
+        setIsLoading(false);
       }
-    } finally {
-      setIsLoading(false);
-    }
-  }, [searchParams, sortBy, minPrice, maxPrice, stars]);
+    },
+    [searchParams, sort, minPrice, maxPrice, starRating],
+  );
 
   useEffect(() => {
     fetchHotels(1);
@@ -97,13 +124,14 @@ function SearchContent() {
   };
 
   const clearFilters = () => {
-    setSortBy('');
+    setSort('');
     setMinPrice('');
     setMaxPrice('');
-    setStars('');
+    setStarRating('');
   };
 
-  const hasActiveFilters = Boolean(sortBy || minPrice || maxPrice || stars);
+  const hasActiveFilters = Boolean(sort || minPrice || maxPrice || starRating);
+  const resultCount = meta?.total ?? hotels.length;
 
   return (
     <div className="min-h-screen bg-secondary-50">
@@ -116,7 +144,7 @@ function SearchContent() {
               city: searchParams.get('city') || '',
               check_in: searchParams.get('check_in') || defaultCheckIn,
               check_out: searchParams.get('check_out') || defaultCheckOut,
-              guests: searchParams.get('guests') ? parseInt(searchParams.get('guests')!) : 2,
+              guests: parseGuests(searchParams.get('guests')),
             }}
           />
         </div>
@@ -131,30 +159,25 @@ function SearchContent() {
                 ? `Hotels in ${searchParams.get('city')}`
                 : 'All Hotels'}
             </h1>
-            {meta ? (
-              <p className="text-sm text-secondary-500 mt-1">
-                {meta.total} {meta.total === 1 ? 'hotel' : 'hotels'} found
-              </p>
-            ) : (
-              <p className="text-sm text-secondary-500 mt-1">
-                {hotels.length} {hotels.length === 1 ? 'hotel' : 'hotels'} available
-              </p>
-            )}
+            <p className="text-sm text-secondary-500 mt-1">
+              {resultCount} {resultCount === 1 ? 'hotel' : 'hotels'}{' '}
+              {availabilityMode ? 'available for your dates' : 'found'}
+            </p>
           </div>
 
           <div className="flex items-center gap-3">
             {/* Sort */}
             <div className="relative">
               <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
+                value={sort}
+                onChange={(e) => setSort(e.target.value)}
                 className="appearance-none pl-3 pr-8 py-2 bg-white border border-secondary-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer"
               >
-                <option value="">Sort by: Default</option>
-                <option value="price_asc">Price: Low to High</option>
-                <option value="price_desc">Price: High to Low</option>
-                <option value="rating">Highest Rated</option>
-                <option value="name">Name: A-Z</option>
+                {SORT_OPTIONS.map((option) => (
+                  <option key={option.value || 'default'} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
               <FiChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-secondary-400 pointer-events-none" />
             </div>
@@ -202,6 +225,7 @@ function SearchContent() {
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
+                    min={0}
                     placeholder="Min"
                     value={minPrice}
                     onChange={(e) => setMinPrice(e.target.value)}
@@ -210,6 +234,7 @@ function SearchContent() {
                   <span className="text-secondary-400">-</span>
                   <input
                     type="number"
+                    min={0}
                     placeholder="Max"
                     value={maxPrice}
                     onChange={(e) => setMaxPrice(e.target.value)}
@@ -223,8 +248,8 @@ function SearchContent() {
                   Star Rating
                 </label>
                 <select
-                  value={stars}
-                  onChange={(e) => setStars(e.target.value)}
+                  value={starRating}
+                  onChange={(e) => setStarRating(e.target.value)}
                   className="w-full px-3 py-2 bg-secondary-50 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                 >
                   <option value="">Any</option>
@@ -253,12 +278,20 @@ function SearchContent() {
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {hotels.map((hotel) => (
-                <HotelCard key={hotel.id} hotel={hotel} />
+                <HotelCard
+                  key={hotel.id}
+                  hotel={hotel}
+                  stay={{
+                    check_in: searchParams.get('check_in'),
+                    check_out: searchParams.get('check_out'),
+                    guests: parseGuests(searchParams.get('guests')),
+                  }}
+                />
               ))}
             </div>
 
-            {/* Pagination */}
-            {meta && meta.last_page > 1 && (
+            {/* Pagination — the availability search returns every match at once */}
+            {meta && (meta.last_page ?? 1) > 1 && (
               <div className="flex items-center justify-center gap-2 mt-10">
                 <Button
                   variant="outline"
@@ -269,10 +302,11 @@ function SearchContent() {
                   Previous
                 </Button>
 
-                {Array.from({ length: meta.last_page }, (_, i) => i + 1)
+                {Array.from({ length: meta.last_page ?? 1 }, (_, i) => i + 1)
                   .filter((page) => {
-                    if (meta.last_page <= 7) return true;
-                    if (page === 1 || page === meta.last_page) return true;
+                    const lastPage = meta.last_page ?? 1;
+                    if (lastPage <= 7) return true;
+                    if (page === 1 || page === lastPage) return true;
                     if (Math.abs(page - currentPage) <= 1) return true;
                     return false;
                   })
@@ -299,7 +333,7 @@ function SearchContent() {
                   variant="outline"
                   size="sm"
                   onClick={() => handlePageChange(currentPage + 1)}
-                  disabled={currentPage >= (meta?.last_page || 1)}
+                  disabled={currentPage >= (meta.last_page ?? 1)}
                 >
                   Next
                 </Button>
@@ -315,6 +349,12 @@ function SearchContent() {
             <p className="text-secondary-500 mb-6">
               Try adjusting your search criteria or explore different destinations.
             </p>
+            {availabilityMode && (
+              <p className="flex items-center justify-center gap-2 text-xs text-secondary-400 mb-6">
+                <FiInfo />
+                Only hotels with a free room for these exact dates are listed.
+              </p>
+            )}
             <Button onClick={clearFilters} variant="outline">
               Clear Filters
             </Button>

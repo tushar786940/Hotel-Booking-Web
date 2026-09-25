@@ -1,23 +1,29 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { User } from '@/types';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import { RegisterData, RoleName, User } from '@/types';
 import { authApi } from '@/lib/api';
 import { getToken, setToken, setUser, clearAuth, getUser } from '@/lib/auth';
 import toast from 'react-hot-toast';
+import { AxiosError } from 'axios';
+
+type ApiErrorBody = { message?: string; errors?: Record<string, string[]> };
+
+const isAxiosError = (error: unknown): error is AxiosError<ApiErrorBody> =>
+  Boolean((error as AxiosError)?.isAxiosError);
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  /** Role names returned by Spatie (`$user->getRoleNames()`). */
+  roles: RoleName[];
+  hasRole: (role: RoleName) => boolean;
+  /** Can access `/manage/*` endpoints. */
+  isHotelOwner: boolean;
+  isAdmin: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (data: {
-    name: string;
-    email: string;
-    password: string;
-    password_confirmation: string;
-    phone?: string;
-  }) => Promise<void>;
+  register: (data: RegisterData) => Promise<void>;
   logout: () => Promise<void>;
   updateUser: (user: User) => void;
   refreshUser: () => Promise<void>;
@@ -25,16 +31,33 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/**
+ * The API answers with `{ message, data: { user, token } }` for
+ * login/register and `{ data: {...user} }` for `GET /profile`.
+ */
+function extractAuthPayload(resData: unknown): { user: User; token: string } {
+  const body = (resData ?? {}) as Record<string, unknown>;
+  const raw = (body.data ?? body) as Record<string, unknown>;
+
+  return {
+    user: (raw.user ?? raw) as User,
+    token: (raw.token as string) ?? '',
+  };
+}
+
+/** `getRoleNames()` is a collection of plain strings, e.g. ["hotel-owner"]. */
+function normalizeRoles(user: User | null): RoleName[] {
+  const roles = user?.roles;
+  if (!Array.isArray(roles)) return [];
+
+  return roles
+    .map((role) => (typeof role === 'string' ? role : (role as { name?: string })?.name))
+    .filter((role): role is RoleName => Boolean(role));
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUserState] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-
-  const extractAuthData = (resData: any): { user: User; token: string } => {
-    const raw = resData?.data || resData;
-    const token = raw?.token || raw?.access_token || raw?.plainTextToken || '';
-    const user = raw?.user || raw;
-    return { user, token };
-  };
 
   const refreshUser = useCallback(async () => {
     const token = getToken();
@@ -47,22 +70,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const response = await authApi.getProfile();
-      const userData = response.data?.data?.user || response.data?.data || response.data;
+      const userData: User | undefined = response.data?.data ?? response.data;
       if (userData && (userData.id || userData.email)) {
         setUserState(userData);
         setUser(userData);
       }
-    } catch (error: any) {
-      // ⚠️ ONLY clear session if server explicitly returns 401 Unauthorized
-      if (error?.response?.status === 401) {
+    } catch (error) {
+      // ⚠️ ONLY clear the session when the server says 401 Unauthorized.
+      if (isAxiosError(error) && error.response?.status === 401) {
         clearAuth();
         setUserState(null);
       } else {
-        // For 404 or other network glitches, keep existing user from localStorage
         const cachedUser = getUser();
-        if (cachedUser) {
-          setUserState(cachedUser);
-        }
+        if (cachedUser) setUserState(cachedUser);
       }
     } finally {
       setIsLoading(false);
@@ -77,6 +97,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUserState(cachedUser);
       setIsLoading(false);
       refreshUser();
+    } else if (token) {
+      refreshUser();
     } else {
       setIsLoading(false);
     }
@@ -86,7 +108,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
     try {
       const response = await authApi.login({ email, password });
-      const { user: userData, token } = extractAuthData(response.data);
+      const { user: userData, token } = extractAuthPayload(response.data);
 
       if (!token) {
         throw new Error('No authentication token received from server');
@@ -96,36 +118,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(userData);
       setUserState(userData);
       toast.success(`Welcome back, ${userData.name}!`);
-    } catch (error: any) {
-      const message = error.response?.data?.message || error.message || 'Login failed';
-      toast.error(message);
+    } catch (error) {
+      const data = isAxiosError(error) ? error.response?.data : undefined;
+      toast.error(
+        data?.errors?.email?.[0] ||
+          data?.message ||
+          (error instanceof Error ? error.message : '') ||
+          'Login failed',
+      );
       throw error;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const register = async (data: {
-    name: string;
-    email: string;
-    password: string;
-    password_confirmation: string;
-    phone?: string;
-  }) => {
+  const register = async (data: RegisterData) => {
     setIsLoading(true);
     try {
       const response = await authApi.register(data);
-      const { user: userData, token } = extractAuthData(response.data);
+      const { user: userData, token } = extractAuthPayload(response.data);
 
       if (token) {
         setToken(token);
         setUser(userData);
         setUserState(userData);
+        // /register does not return roles — pull the full profile.
+        refreshUser();
       }
       toast.success('Account created successfully!');
-    } catch (error: any) {
-      const message = error.response?.data?.message || 'Registration failed';
-      toast.error(message);
+    } catch (error) {
+      const data = isAxiosError(error) ? error.response?.data : undefined;
+      toast.error(data?.message || 'Registration failed');
       throw error;
     } finally {
       setIsLoading(false);
@@ -149,12 +172,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(userData);
   };
 
+  const roles = useMemo(() => normalizeRoles(user), [user]);
+  const hasRole = useCallback((role: RoleName) => roles.includes(role), [roles]);
+
   return (
     <AuthContext.Provider
       value={{
         user,
         isLoading,
         isAuthenticated: !!user,
+        roles,
+        hasRole,
+        isHotelOwner: roles.includes('hotel-owner') || roles.includes('admin'),
+        isAdmin: roles.includes('admin'),
         login,
         register,
         logout,

@@ -3,10 +3,12 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { getImageUrl, cn } from '@/lib/utils';
+import type { ApiImage } from '@/types';
 import { FiX, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 
 interface HotelGalleryProps {
-  images: string[];
+  /** `images_with_urls` from the API: [{ url, thumbnail_url }]. */
+  images: Array<ApiImage | string>;
   hotelName: string;
 }
 
@@ -14,7 +16,8 @@ export default function HotelGallery({ images, hotelName }: HotelGalleryProps) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
 
-  const displayImages = images.length > 0 ? images : ['placeholder-hotel.jpg'];
+  const displayImages: Array<ApiImage | string> =
+    images && images.length > 0 ? images : [''];
 
   const openLightbox = (index: number) => {
     setCurrentIndex(index);
@@ -49,6 +52,9 @@ export default function HotelGallery({ images, hotelName }: HotelGalleryProps) {
             alt={`${hotelName} - Main`}
             fill
             className="object-cover group-hover:scale-105 transition-transform duration-500"
+            /* Half the 4-column grid on desktop, full-bleed on mobile. Without
+               this, `fill` makes Next request a 100vw source at every size. */
+            sizes="(max-width: 768px) 100vw, 50vw"
             priority
           />
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
@@ -69,6 +75,8 @@ export default function HotelGallery({ images, hotelName }: HotelGalleryProps) {
               alt={`${hotelName} - ${index + 2}`}
               fill
               className="object-cover group-hover:scale-105 transition-transform duration-500"
+              /* `hidden md:block` — never rendered below the md breakpoint. */
+              sizes="(max-width: 768px) 0px, 25vw"
             />
             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
             
@@ -125,6 +133,9 @@ export default function HotelGallery({ images, hotelName }: HotelGalleryProps) {
               alt={`${hotelName} - ${currentIndex + 1}`}
               fill
               className="object-contain"
+              /* Capped by max-w-5xl, so don't request a 100vw source on a
+                 wide display. */
+              sizes="(max-width: 1024px) 100vw, 1024px"
               priority
             />
           </div>
@@ -151,7 +162,7 @@ export default function HotelGallery({ images, hotelName }: HotelGalleryProps) {
                 )}
               >
                 <Image
-                  src={getImageUrl(image)}
+                  src={getImageUrl(image, 'thumbnail_url')}
                   alt=""
                   width={64}
                   height={48}

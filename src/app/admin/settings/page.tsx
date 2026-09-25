@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { API_BASE_URL, API_ORIGIN, STORAGE_BASE_URL } from '@/lib/config';
 
 export default function AdminSettingsPage() {
   return (
@@ -21,8 +22,9 @@ export default function AdminSettingsPage() {
         <div>
           <h3 className="font-semibold text-secondary-900 mb-2">API Configuration</h3>
           <div className="bg-secondary-50 rounded-xl p-4 text-sm font-mono text-secondary-600">
-            <p>NEXT_PUBLIC_API_URL={process.env.NEXT_PUBLIC_API_URL}</p>
-            <p>NEXT_PUBLIC_STORAGE_URL={process.env.NEXT_PUBLIC_STORAGE_URL}</p>
+            <p>NEXT_PUBLIC_API_URL={process.env.NEXT_PUBLIC_API_URL || '(not set)'}</p>
+            <p>Resolved API base: {API_BASE_URL}</p>
+            <p>Resolved storage: {STORAGE_BASE_URL}</p>
           </div>
         </div>
 
@@ -31,7 +33,7 @@ export default function AdminSettingsPage() {
         <div>
           <h3 className="font-semibold text-secondary-900 mb-2">Backend Admin</h3>
           <a
-            href="http://localhost:8000/admin"
+            href={`${API_ORIGIN}/admin`}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-xl text-sm font-medium hover:bg-primary-700 transition-colors"

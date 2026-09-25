@@ -1,9 +1,23 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 import toast from "react-hot-toast";
+import { API_BASE_URL } from "@/lib/config";
+import type {
+  CreateBookingData,
+  CreateReviewData,
+  HotelFormData,
+  ManageableBookingStatus,
+  RoomTypeFormData,
+  SearchFilters,
+} from "@/types";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
-
+/**
+ * Axios client for the Hotel Booking API (Laravel + Sanctum).
+ *
+ * Every path below maps 1:1 to a route in the backend's `routes/api.php`,
+ * which is mounted under `/api/v1`. `API_BASE_URL` already includes that
+ * prefix (see `src/lib/config.ts`), so paths here are written exactly as the
+ * routes are declared.
+ */
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -41,10 +55,21 @@ api.interceptors.response.use(
           // Unauthenticated - handled by AuthContext
           break;
         case 403:
-          toast.error("You do not have permission to perform this action");
+          toast.error(
+            data?.message ||
+              "You do not have permission to perform this action",
+          );
           break;
         case 404:
-          // Let caller handle 404
+          // Let the caller decide what an empty result means, but make a
+          // misconfigured base URL obvious instead of silently failing —
+          // this is the classic "every page 404s" symptom.
+          if (process.env.NODE_ENV === "development") {
+            console.warn(
+              `[api] 404 ${error.config?.method?.toUpperCase()} ${API_BASE_URL}${error.config?.url}\n` +
+                "If every request 404s, check NEXT_PUBLIC_API_URL — the backend serves everything under /api/v1.",
+            );
+          }
           break;
         case 422:
           if (data?.errors) {
@@ -57,7 +82,9 @@ api.interceptors.response.use(
           }
           break;
         case 429:
-          toast.error("Too many requests. Please wait a moment.");
+          toast.error(
+            data?.message || "Too many requests. Please wait a moment.",
+          );
           break;
         case 500:
           toast.error("Server error. Please try again later.");
@@ -76,7 +103,102 @@ api.interceptors.response.use(
 );
 
 // ═══════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════
+
+type QueryParams = Record<string, string | number | boolean | undefined | null>;
+
+/** Drop empty values so we never send `?city=&guests=` to the API. */
+function clean(params?: QueryParams): QueryParams {
+  const result: QueryParams = {};
+  if (!params) return result;
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    result[key] = value;
+  });
+
+  return result;
+}
+
+/**
+ * Pull a human-readable message out of a Laravel error response.
+ *
+ * A 422 can be either a field-validation failure
+ *   { message, errors: { check_in: ["The check in field must be a date after today."] } }
+ * or a business-rule rejection thrown from a service as a ValidationException
+ *   { message, errors: { room_type_id: ["No rooms available for the selected dates."] } }
+ *
+ * Both matter to the user, so prefer the specific field error over the generic
+ * "The given data was invalid." wrapper.
+ */
+export function getApiErrorMessage(error: unknown, fallback = "Something went wrong"): string {
+  const axiosError = error as AxiosError<{
+    message?: string;
+    errors?: Record<string, string[]>;
+  }>;
+  const data = axiosError?.response?.data;
+
+  if (data?.errors) {
+    const first = Object.values(data.errors)[0];
+    if (first?.[0]) return first[0];
+  }
+
+  if (data?.message) return data.message;
+  if (!axiosError?.response && axiosError?.request) {
+    return "Unable to reach the server. Is the API running?";
+  }
+
+  return fallback;
+}
+
+/** HTTP status of a failed request, or 0 when the request never landed. */
+export function getApiErrorStatus(error: unknown): number {
+  return (error as AxiosError)?.response?.status ?? 0;
+}
+
+/**
+ * True when the API rejected a booking because every room of that type is
+ * taken for the requested dates (BookingService::createBooking step 1) rather
+ * than because a field was malformed.
+ */
+export function isNoRoomsAvailableError(error: unknown): boolean {
+  const axiosError = error as AxiosError<{ errors?: Record<string, string[]> }>;
+  if (axiosError?.response?.status !== 422) return false;
+
+  const roomTypeErrors = axiosError.response.data?.errors?.room_type_id;
+  return Boolean(roomTypeErrors?.some((m) => /no rooms available/i.test(m)));
+}
+
+/** `GET /search` requires `check_in` to be strictly after today. */
+export function isFutureDate(value?: string | null): boolean {
+  if (!value) return false;
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return false;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  return date.getTime() > today.getTime();
+}
+
+/**
+ * The availability search endpoint only accepts a bookable date range.
+ * Anything else has to fall back to the plain hotel listing.
+ */
+export function canUseAvailabilitySearch(filters: SearchFilters): boolean {
+  return Boolean(
+    filters.check_in &&
+      filters.check_out &&
+      isFutureDate(filters.check_in) &&
+      filters.check_out > filters.check_in,
+  );
+}
+
+// ═══════════════════════════════════════════
 // AUTH API
+// Route::post('/register'), Route::post('/login'),
+// Route::post('/logout'), Route::get|put('/profile')
 // ═══════════════════════════════════════════
 export const authApi = {
   register: (data: {
@@ -92,204 +214,186 @@ export const authApi = {
 
   logout: () => api.post("/logout"),
 
-  // Matches Route::get('/profile')
   getProfile: () => api.get("/profile"),
 
-  // Matches Route::put('/profile')
-  updateProfile: (data: {
-    name?: string;
-    phone?: string;
-    current_password?: string;
-    password?: string;
-    password_confirmation?: string;
-  }) => api.put("/profile", data),
+  /** The API only accepts `name` and `phone` (AuthController@updateProfile). */
+  updateProfile: (data: { name?: string; phone?: string | null }) =>
+    api.put("/profile", data),
 };
 
 // ═══════════════════════════════════════════
 // HOTELS API
+// Route::get('/hotels'), Route::get('/hotels/{hotel:slug}')
 // ═══════════════════════════════════════════
 export const hotelsApi = {
-  list: (params?: Record<string, any>) => api.get("/hotels", { params }),
+  /**
+   * GET /hotels
+   * Filters: city, country, star_rating, min_price, max_price
+   * Sorting: sort_by=price|rating (+ sort_order=asc|desc for price)
+   */
+  list: (filters: SearchFilters = {}) =>
+    api.get("/hotels", {
+      params: clean({
+        city: filters.city,
+        country: filters.country,
+        star_rating: filters.star_rating,
+        min_price: filters.min_price,
+        max_price: filters.max_price,
+        sort_by: filters.sort_by,
+        sort_order: filters.sort_order,
+        page: filters.page,
+        per_page: filters.per_page,
+      }),
+    }),
 
+  /** Route model binding is `{hotel:slug}` — this must be the slug. */
   getBySlug: (slug: string) => api.get(`/hotels/${slug}`),
 
-  getReviews: (hotelId: number | string, params?: Record<string, any>) =>
-    api.get(`/hotels/${hotelId}/reviews`, { params }),
+  /** Route model binding is `{hotel}` — this must be the numeric id. */
+  getReviews: (hotelId: number | string, params?: { page?: number }) =>
+    api.get(`/hotels/${hotelId}/reviews`, { params: clean(params) }),
 };
 
 // ═══════════════════════════════════════════
 // AVAILABILITY & SEARCH API
+// Route::get('/search'), Route::get('/hotels/{hotel}/availability')
 // ═══════════════════════════════════════════
 export const availabilityApi = {
-  search: async (params: Record<string, any>) => {
-    const cleanParams: Record<string, any> = {};
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== "") {
-        cleanParams[key] = value;
-      }
-    });
-
-    try {
-      // If city or dates are provided, try availability search first
-      if (cleanParams.city || (cleanParams.check_in && cleanParams.check_out)) {
-        const response = await api.get("/search", { params: cleanParams });
-        const data = response.data?.data || response.data;
-
-        // If availability search found hotels, return them
-        if (Array.isArray(data) && data.length > 0) {
-          return response;
-        }
-      }
-
-      // Fallback: list all hotels matching filters
-      return await api.get("/hotels", { params: cleanParams });
-    } catch (error: any) {
-      // If /search endpoint fails, fallback to /hotels
-      return await api.get("/hotels", { params: cleanParams });
+  /**
+   * GET /search — hotels that actually have a free room for the dates.
+   *
+   * `check_in`/`check_out` are REQUIRED and `check_in` must be after today,
+   * otherwise the API answers 422. When we do not have a usable date range we
+   * transparently fall back to `GET /hotels`, which supports the same
+   * filters minus availability.
+   */
+  search: (filters: SearchFilters = {}) => {
+    if (!canUseAvailabilitySearch(filters)) {
+      return hotelsApi.list(filters);
     }
+
+    return api.get("/search", {
+      params: clean({
+        city: filters.city,
+        country: filters.country,
+        check_in: filters.check_in,
+        check_out: filters.check_out,
+        guests: filters.guests,
+        min_price: filters.min_price,
+        max_price: filters.max_price,
+        star_rating: filters.star_rating,
+      }),
+    });
   },
 
+  /** GET /hotels/{hotel}/availability — numeric hotel id. */
   checkHotel: (
     hotelId: number | string,
-    params: {
-      check_in: string;
-      check_out: string;
-      guests?: number;
-    },
-  ) => api.get(`/hotels/${hotelId}/availability`, { params }),
+    params: { check_in: string; check_out: string; guests?: number },
+  ) => api.get(`/hotels/${hotelId}/availability`, { params: clean(params) }),
 };
 
 // ═══════════════════════════════════════════
 // BOOKINGS API
+// Route::get|post('/bookings'), Route::get('/bookings/{booking}'),
+// Route::post('/bookings/{booking}/cancel')
 // ═══════════════════════════════════════════
 export const bookingsApi = {
-  list: (params?: Record<string, any>) => api.get("/bookings", { params }),
+  list: (params?: { status?: string; page?: number }) =>
+    api.get("/bookings", { params: clean(params) }),
 
-  create: (data: {
-    hotel_id: number;
-    room_type_id: number;
-    check_in: string;
-    check_out: string;
-    guests: number;
-    special_requests?: string;
-  }) => api.post("/bookings", data),
+  /**
+   * The API derives the hotel and the physical room from `room_type_id`,
+   * so only these five fields are accepted (BookingController@store).
+   */
+  create: (data: CreateBookingData) => api.post("/bookings", data),
 
   getById: (id: number | string) => api.get(`/bookings/${id}`),
 
-  // Matches Route::post('/bookings/{booking}/cancel')
+  /** BookingController@cancel validates `reason` (not `cancellation_reason`). */
   cancel: (id: number | string, reason?: string) =>
-    api.post(`/bookings/${id}/cancel`, { cancellation_reason: reason }),
+    api.post(`/bookings/${id}/cancel`, clean({ reason })),
 };
 
 // ═══════════════════════════════════════════
 // PAYMENTS API
+// Route::post('/bookings/{booking}/pay')
+// Route::get('/bookings/{booking}/payment-status')
 // ═══════════════════════════════════════════
 export const paymentsApi = {
-  // Matches Route::post('/bookings/{booking}/pay')
-  pay: (
-    bookingId: number | string,
-    data: {
-      method?: string;
-      payment_method_id?: string;
-    },
-  ) => api.post(`/bookings/${bookingId}/pay`, data),
+  /**
+   * Creates a Stripe PaymentIntent and returns `{ client_secret, payment_id,
+   * amount }`. The booking is only confirmed once Stripe calls the
+   * `/webhooks/stripe` endpoint — the request body is ignored by the API.
+   */
+  pay: (bookingId: number | string) => api.post(`/bookings/${bookingId}/pay`),
 
-  // Matches Route::get('/bookings/{booking}/payment-status')
   getStatus: (bookingId: number | string) =>
     api.get(`/bookings/${bookingId}/payment-status`),
 };
 
 // ═══════════════════════════════════════════
 // REVIEWS API
+// Route::get('/hotels/{hotel}/reviews')
+// Route::post('/bookings/{booking}/review')
 // ═══════════════════════════════════════════
 export const reviewsApi = {
-  // Matches Route::get('/hotels/{hotel}/reviews')
-  listByHotel: (hotelId: number | string, params?: Record<string, any>) =>
-    api.get(`/hotels/${hotelId}/reviews`, { params }),
+  listByHotel: (hotelId: number | string, params?: { page?: number }) =>
+    api.get(`/hotels/${hotelId}/reviews`, { params: clean(params) }),
 
-  // Matches Route::post('/bookings/{booking}/review')
-  create: (
-    bookingId: number | string,
-    data: {
-      rating: number;
-      title?: string;
-      comment: string;
-      pros?: string;
-      cons?: string;
-    },
-  ) => api.post(`/bookings/${bookingId}/review`, data),
+  /** Only `rating` (1-5) and `comment` are accepted by ReviewController@store. */
+  create: (bookingId: number | string, data: CreateReviewData) =>
+    api.post(`/bookings/${bookingId}/review`, data),
 };
 
 // ═══════════════════════════════════════════
 // INVOICES API
+// Route::get('/bookings/{booking}/invoice[/download]')
+// Route::post('/bookings/{booking}/invoice/email')
 // ═══════════════════════════════════════════
 export const invoicesApi = {
-  // Matches Route::get('/bookings/{booking}/invoice/download')
   download: (bookingId: number | string) =>
     api.get(`/bookings/${bookingId}/invoice/download`, {
       responseType: "blob",
     }),
 
-  // Matches Route::get('/bookings/{booking}/invoice')
   view: (bookingId: number | string) =>
-    api.get(`/bookings/${bookingId}/invoice`),
+    api.get(`/bookings/${bookingId}/invoice`, { responseType: "blob" }),
 
-  // Matches Route::post('/bookings/{booking}/invoice/email')
   email: (bookingId: number | string) =>
     api.post(`/bookings/${bookingId}/invoice/email`),
 };
 
 // ═══════════════════════════════════════════
-// ADMIN / HOTEL OWNER API
+// HOTEL OWNER API — `/manage/*` (role:hotel-owner)
 // ═══════════════════════════════════════════
-export const adminApi = {
-  // ── Hotels ──
-  listHotels: (params?: Record<string, any>) =>
-    api.get("/manage/hotels", { params }),
+export const manageApi = {
+  // ── Hotels: Route::apiResource('hotels', AdminHotelController::class) ──
+  listHotels: () => api.get("/manage/hotels"),
 
   getHotel: (id: number | string) => api.get(`/manage/hotels/${id}`),
 
-  createHotel: (data: {
-    name: string;
-    description: string;
-    address: string;
-    city: string;
-    state: string;
-    country: string;
-    zip_code: string;
-    stars: number;
-    check_in_time: string;
-    check_out_time: string;
-    amenities: string[];
-    is_active: boolean;
-  }) => api.post("/manage/hotels", data),
+  createHotel: (data: HotelFormData) => api.post("/manage/hotels", data),
 
-  updateHotel: (id: number | string, data: Record<string, any>) =>
-    api.put(`/manage/hotels/${id}`, data),
+  updateHotel: (
+    id: number | string,
+    data: Partial<HotelFormData> & { is_active?: boolean },
+  ) => api.put(`/manage/hotels/${id}`, data),
 
   deleteHotel: (id: number | string) => api.delete(`/manage/hotels/${id}`),
 
-  // ── Room Types ──
+  // ── Room types: apiResource('hotels.room-types')->shallow() ──
   listRoomTypes: (hotelId: number | string) =>
     api.get(`/manage/hotels/${hotelId}/room-types`),
 
-  createRoomType: (
-    hotelId: number | string,
-    data: {
-      name: string;
-      description: string;
-      base_price: number;
-      max_guests: number;
-      bed_type: string;
-      room_size?: number;
-      amenities: string[];
-      total_rooms: number;
-      is_active: boolean;
-    },
-  ) => api.post(`/manage/hotels/${hotelId}/room-types`, data),
+  createRoomType: (hotelId: number | string, data: RoomTypeFormData) =>
+    api.post(`/manage/hotels/${hotelId}/room-types`, data),
 
-  updateRoomType: (roomTypeId: number | string, data: Record<string, any>) =>
-    api.put(`/manage/room-types/${roomTypeId}`, data),
+  /** Shallow route: `/manage/room-types/{roomType}`. */
+  updateRoomType: (
+    roomTypeId: number | string,
+    data: Partial<RoomTypeFormData>,
+  ) => api.put(`/manage/room-types/${roomTypeId}`, data),
 
   deleteRoomType: (roomTypeId: number | string) =>
     api.delete(`/manage/room-types/${roomTypeId}`),
@@ -300,17 +404,43 @@ export const adminApi = {
       headers: { "Content-Type": "multipart/form-data" },
     }),
 
-  deleteHotelImage: (hotelId: number | string, imageId: number | string) =>
+  replaceHotelImages: (hotelId: number | string, formData: FormData) =>
+    api.put(`/manage/hotels/${hotelId}/images`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }),
+
+  /** ImageUploadController@deleteHotelImage validates `image_index`. */
+  deleteHotelImage: (hotelId: number | string, imageIndex: number) =>
     api.delete(`/manage/hotels/${hotelId}/images`, {
-      data: { image_id: imageId },
+      data: { image_index: imageIndex },
+    }),
+
+  reorderHotelImages: (hotelId: number | string, order: number[]) =>
+    api.put(`/manage/hotels/${hotelId}/images/reorder`, { order }),
+
+  uploadRoomTypeImages: (roomTypeId: number | string, formData: FormData) =>
+    api.post(`/manage/room-types/${roomTypeId}/images`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
     }),
 
   // ── Bookings ──
-  listBookings: (hotelId: number | string, params?: Record<string, any>) =>
-    api.get(`/manage/hotels/${hotelId}/bookings`, { params }),
+  listBookings: (
+    hotelId: number | string,
+    params?: { status?: string; page?: number },
+  ) => api.get(`/manage/hotels/${hotelId}/bookings`, { params: clean(params) }),
 
-  updateBookingStatus: (bookingId: number | string, status: string) =>
-    api.put(`/manage/bookings/${bookingId}/status`, { status }),
+  updateBookingStatus: (
+    bookingId: number | string,
+    status: ManageableBookingStatus,
+  ) => api.put(`/manage/bookings/${bookingId}/status`, { status }),
+
+  regenerateInvoice: (bookingId: number | string) =>
+    api.post(`/manage/bookings/${bookingId}/invoice/regenerate`, null, {
+      responseType: "blob",
+    }),
 };
+
+/** @deprecated kept as an alias — the backend calls these "manage" routes. */
+export const adminApi = manageApi;
 
 export default api;

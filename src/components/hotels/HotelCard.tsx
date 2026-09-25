@@ -1,42 +1,84 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { Hotel } from '@/types';
-import { formatCurrency, getImageUrl, getHotelMinPrice, cn } from '@/lib/utils';
+import {
+  PLACEHOLDER_IMAGE, formatCurrency, getHotelImage, getHotelMinPrice, cn,
+} from '@/lib/utils';
 import StarRating from '@/components/ui/StarRating';
 import { FiMapPin, FiStar } from 'react-icons/fi';
+
+/**
+ * Carry the guest's stay details through to the hotel page.
+ *
+ * Without this the link is a bare /hotels/{slug}: searching for 4 guests and
+ * then opening a hotel silently resets the party size to the default 2, and
+ * the booking form inherits that instead of what was asked for.
+ */
+function buildHotelHref(slug: string, stay?: HotelCardStay): string {
+  const params = new URLSearchParams();
+
+  if (stay?.check_in) params.set('check_in', stay.check_in);
+  if (stay?.check_out) params.set('check_out', stay.check_out);
+  if (stay?.guests) params.set('guests', String(stay.guests));
+
+  const query = params.toString();
+  return query ? `/hotels/${slug}?${query}` : `/hotels/${slug}`;
+}
+
+export interface HotelCardStay {
+  check_in?: string | null;
+  check_out?: string | null;
+  guests?: number | null;
+}
 
 interface HotelCardProps {
   hotel: Hotel;
   className?: string;
+  /** Current search context, forwarded to the hotel page. */
+  stay?: HotelCardStay;
 }
 
-export default function HotelCard({ hotel, className }: HotelCardProps) {
-  const mainImage = hotel.images?.[0];
-  const imageUrl = getImageUrl(mainImage);
+export default function HotelCard({ hotel, className, stay }: HotelCardProps) {
+  const imageUrl = getHotelImage(hotel);
   const minPrice = getHotelMinPrice(hotel);
+  const reviewsCount = hotel.reviews_count ?? 0;
+  const [imageFailed, setImageFailed] = useState(false);
 
   return (
-    <Link href={`/hotels/${hotel.slug}`} className={cn('group block', className)}>
+    <Link href={buildHotelHref(hotel.slug, stay)} className={cn('group block', className)}>
       <div className="bg-white rounded-2xl overflow-hidden shadow-card hover:shadow-card-hover transition-all duration-300 h-full flex flex-col">
         {/* Image */}
         <div className="relative h-56 overflow-hidden">
           <Image
-            src={imageUrl}
+            src={imageFailed ? PLACEHOLDER_IMAGE : imageUrl}
             alt={hotel.name || 'Hotel'}
             fill
             className="object-cover group-hover:scale-105 transition-transform duration-500"
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+            /*
+             * A stored path that no longer resolves (missing file, or
+             * `php artisan storage:link` never run) would otherwise leave a
+             * broken-image box sitting in the middle of the card.
+             */
+            onError={() => {
+              if (process.env.NODE_ENV === 'development') {
+                console.warn(
+                  `[HotelCard] image failed for "${hotel.name}": ${imageUrl}`,
+                );
+              }
+              setImageFailed(true);
+            }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
-          
-          {/* Stars Badge */}
+
+          {/* Star rating badge */}
           <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-sm rounded-lg px-2.5 py-1 flex items-center gap-1">
             <FiStar className="text-amber-500 text-xs fill-amber-500" />
             <span className="text-xs font-semibold text-secondary-800">
-              {hotel.stars || 3}-Star
+              {hotel.star_rating || 3}-Star
             </span>
           </div>
 
@@ -64,11 +106,11 @@ export default function HotelCard({ hotel, className }: HotelCardProps) {
           </div>
 
           {/* Rating */}
-          {hotel.average_rating && hotel.average_rating > 0 ? (
+          {hotel.average_rating > 0 ? (
             <div className="flex items-center gap-2 mt-3">
               <StarRating rating={hotel.average_rating} size="sm" />
               <span className="text-sm text-secondary-500">
-                ({hotel.reviews_count || 0} {hotel.reviews_count === 1 ? 'review' : 'reviews'})
+                ({reviewsCount} {reviewsCount === 1 ? 'review' : 'reviews'})
               </span>
             </div>
           ) : null}

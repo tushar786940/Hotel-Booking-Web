@@ -3,8 +3,8 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Hotel } from '@/types';
-import { adminApi } from '@/lib/api';
-import { getImageUrl, formatCurrency } from '@/lib/utils';
+import { manageApi } from '@/lib/api';
+import { getHotelImage, formatCurrency, getHotelMinPrice } from '@/lib/utils';
 import Button from '@/components/ui/Button';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Badge from '@/components/ui/Badge';
@@ -21,8 +21,8 @@ export default function AdminHotelsPage() {
   const fetchHotels = async () => {
     setIsLoading(true);
     try {
-      const response = await adminApi.listHotels({ per_page: 50 });
-      const data = response.data?.data || response.data;
+      const response = await manageApi.listHotels();
+      const data = response.data?.data ?? response.data;
       setHotels(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Failed to fetch hotels:', error);
@@ -40,11 +40,11 @@ export default function AdminHotelsPage() {
 
     setDeletingId(id);
     try {
-      await adminApi.deleteHotel(id);
+      await manageApi.deleteHotel(id);
       toast.success('Hotel deleted successfully');
       fetchHotels();
-    } catch (error) {
-      toast.error('Failed to delete hotel');
+    } catch {
+      // 422 (active bookings) is surfaced by the interceptor.
     } finally {
       setDeletingId(null);
     }
@@ -103,7 +103,7 @@ export default function AdminHotelsPage() {
                       <div className="flex items-center gap-3">
                         <div className="relative w-12 h-12 rounded-xl overflow-hidden flex-shrink-0">
                           <Image
-                            src={getImageUrl(hotel.images?.[0])}
+                            src={getHotelImage(hotel)}
                             alt={hotel.name}
                             fill
                             className="object-cover"
@@ -125,15 +125,15 @@ export default function AdminHotelsPage() {
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-1">
                         <FiStar className="text-amber-400 fill-amber-400" />
-                        <span className="text-sm font-medium">{hotel.stars}</span>
+                        <span className="text-sm font-medium">{hotel.star_rating}</span>
                       </div>
                     </td>
                     <td className="px-5 py-4">
-                      <Badge status={hotel.is_active ? 'confirmed' : 'cancelled'} />
+                      <Badge status={hotel.is_active === false ? 'cancelled' : 'confirmed'} />
                     </td>
                     <td className="px-5 py-4">
                       <span className="text-sm font-medium text-secondary-900">
-                        {hotel.min_price ? formatCurrency(hotel.min_price) : '—'}
+                        {getHotelMinPrice(hotel) > 0 ? formatCurrency(getHotelMinPrice(hotel)) : '—'}
                       </span>
                     </td>
                     <td className="px-5 py-4">
