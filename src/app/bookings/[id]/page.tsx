@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { Booking, ReviewFormData } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { bookingsApi, invoicesApi, reviewsApi } from '@/lib/api';
-import { formatCurrency, formatDate, getImageUrl, getBookingPriceBreakdown, cn } from '@/lib/utils';
+import { formatCurrency, formatDate, getImageUrl, cn } from '@/lib/utils';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import StarRating from '@/components/ui/StarRating';
@@ -135,7 +135,6 @@ export default function BookingDetailPage() {
   const needsPayment = booking.status === 'pending' && (!payment || payment.status !== 'completed');
   const canReview = booking.status === 'checked_out' && !booking.review;
   const imageUrl = hotel?.images?.[0] ? getImageUrl(hotel.images[0]) : '/images/placeholder-hotel.jpg';
-  const price = getBookingPriceBreakdown(booking);
 
   return (
     <div className="page-container">
@@ -214,7 +213,7 @@ export default function BookingDetailPage() {
                   <p className="text-xs text-secondary-400 uppercase tracking-wide">Nights</p>
                   <div className="flex items-center gap-2 mt-1">
                     <FiClock className="text-primary-500" />
-                    <p className="font-medium text-secondary-900">{price.nights}</p>
+                    <p className="font-medium text-secondary-900">{booking.nights}</p>
                   </div>
                 </div>
               </div>
@@ -348,20 +347,19 @@ export default function BookingDetailPage() {
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-secondary-500">
-                    {formatCurrency(price.nightlyRate)} × {price.nights}{' '}
-                    {price.nights === 1 ? 'night' : 'nights'}
+                    {formatCurrency(booking.base_price)} × {booking.nights} nights
                   </span>
-                  <span>{formatCurrency(price.subtotal)}</span>
+                  <span>{formatCurrency(booking.base_price * booking.nights)}</span>
                 </div>
-                {price.taxes > 0 && (
+                {booking.taxes > 0 && (
                   <div className="flex justify-between">
                     <span className="text-secondary-500">Taxes & fees</span>
-                    <span>{formatCurrency(price.taxes)}</span>
+                    <span>{formatCurrency(booking.taxes)}</span>
                   </div>
                 )}
                 <div className="flex justify-between font-semibold text-lg pt-2 border-t border-secondary-100">
                   <span>Total</span>
-                  <span className="text-primary-700">{formatCurrency(price.total)}</span>
+                  <span className="text-primary-700">{formatCurrency(booking.total_price)}</span>
                 </div>
               </div>
 
