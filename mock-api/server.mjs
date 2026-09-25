@@ -628,6 +628,16 @@ route('POST', '/api/v1/bookings/{id}/cancel', (req, res, params, body) => {
 });
 
 // ── PAYMENTS ──
+/**
+ * Set MOCK_STRIPE=off to reproduce an API whose STRIPE_SECRET is not set.
+ *
+ * PaymentService's constructor does Stripe::setApiKey(config('services.stripe.secret')).
+ * With no key, PaymentIntent::create() throws AuthenticationException, and
+ * nothing in PaymentService, PaymentController or bootstrap/app.php catches
+ * it — so the client gets a bare 500.
+ */
+const STRIPE_CONFIGURED = (process.env.MOCK_STRIPE ?? 'on') !== 'off';
+
 route('POST', '/api/v1/bookings/{id}/pay', (req, res, params) => {
   const user = authUser(req);
   if (!user) return fail(res, 401, 'Unauthenticated.');
@@ -636,6 +646,16 @@ route('POST', '/api/v1/bookings/{id}/pay', (req, res, params) => {
   if (booking.user_id !== user.id) return fail(res, 403, 'Unauthorized');
   if (booking.status !== 'pending')
     return fail(res, 422, `This booking cannot be paid for. Current status: ${booking.status}`);
+
+  if (!STRIPE_CONFIGURED) {
+    // Laravel with APP_DEBUG=true surfaces the exception message; with
+    // APP_DEBUG=false it is just "Server Error".
+    return json(res, 500, {
+      message:
+        'No API key provided. Set your API key using "Stripe::setApiKey(<API-KEY>)".',
+      exception: 'Stripe\\Exception\\AuthenticationException',
+    });
+  }
 
   const transactionId = `pi_mock_${Math.random().toString(36).slice(2, 12)}`;
   payments.push({

@@ -152,6 +152,11 @@ export function getApiErrorMessage(error: unknown, fallback = "Something went wr
   return fallback;
 }
 
+/** HTTP status of a failed request, or 0 when the request never landed. */
+export function getApiErrorStatus(error: unknown): number {
+  return (error as AxiosError)?.response?.status ?? 0;
+}
+
 /**
  * True when the API rejected a booking because every room of that type is
  * taken for the requested dates (BookingService::createBooking step 1) rather

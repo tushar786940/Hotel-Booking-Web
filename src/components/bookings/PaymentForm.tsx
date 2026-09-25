@@ -2,11 +2,17 @@
 
 import React, { useState } from 'react';
 import { Booking, PaymentIntent, PaymentStatusResponse } from '@/types';
-import { paymentsApi } from '@/lib/api';
+import { getApiErrorMessage, getApiErrorStatus, paymentsApi } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 import Button from '@/components/ui/Button';
 import toast from 'react-hot-toast';
-import { FiCreditCard, FiShield, FiRefreshCw, FiExternalLink } from 'react-icons/fi';
+import {
+  FiCreditCard,
+  FiShield,
+  FiRefreshCw,
+  FiExternalLink,
+  FiAlertCircle,
+} from 'react-icons/fi';
 import { FaStripe } from 'react-icons/fa';
 
 interface PaymentFormProps {
@@ -30,17 +36,41 @@ export default function PaymentForm({ booking, onPaymentSuccess }: PaymentFormPr
   const [isProcessing, setIsProcessing] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [intent, setIntent] = useState<PaymentIntent | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [gatewayDown, setGatewayDown] = useState(false);
 
   const handleCreateIntent = async () => {
     setIsProcessing(true);
+    setError(null);
     try {
       const response = await paymentsApi.pay(booking.id);
       const data: PaymentIntent = response.data?.data ?? response.data;
       setIntent(data);
       toast.success('Payment started — complete the card payment to confirm.');
-    } catch (error) {
-      // 422 / 403 messages come from the axios interceptor.
-      console.error('Payment error:', error);
+    } catch (err) {
+      const status = getApiErrorStatus(err);
+
+      /**
+       * A 5xx here is not something the guest can fix by retrying.
+       * `PaymentService` calls `Stripe::setApiKey(config('services.stripe.secret'))`
+       * and then `PaymentIntent::create()`. If STRIPE_SECRET is unset the SDK
+       * throws AuthenticationException, and neither the service, the
+       * controller nor `bootstrap/app.php` catches it — so it escapes as a
+       * bare 500. Say so, rather than inviting the guest to try again.
+       */
+      if (status >= 500) {
+        setGatewayDown(true);
+        setError(
+          'Payments are unavailable right now — the server could not reach the payment provider. ' +
+            'Your booking is safe and still held; nothing has been charged.',
+        );
+      } else if (status === 0) {
+        setError('Could not reach the server. Check your connection and try again.');
+      } else {
+        setError(getApiErrorMessage(err, 'Could not start the payment.'));
+      }
+
+      console.error('Payment error:', err);
     } finally {
       setIsProcessing(false);
     }
@@ -58,8 +88,9 @@ export default function PaymentForm({ booking, onPaymentSuccess }: PaymentFormPr
       } else {
         toast('Payment is still pending.', { icon: '⏳' });
       }
-    } catch (error) {
-      console.error('Payment status error:', error);
+    } catch (err) {
+      setError(getApiErrorMessage(err, 'Could not check the payment status.'));
+      console.error('Payment status error:', err);
     } finally {
       setIsChecking(false);
     }
@@ -88,6 +119,24 @@ export default function PaymentForm({ booking, onPaymentSuccess }: PaymentFormPr
           </p>
         </div>
       </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-danger-200 bg-danger-50 px-3 py-2.5 mb-4"
+        >
+          <FiAlertCircle className="mt-0.5 flex-shrink-0 text-danger-500" />
+          <div className="text-sm text-danger-700">
+            <p>{error}</p>
+            {gatewayDown && (
+              <p className="mt-1 text-xs text-danger-600">
+                If you are running this API yourself, set <code>STRIPE_SECRET</code> in
+                its <code>.env</code> and restart it.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {intent ? (
         <div className="space-y-4">
@@ -119,11 +168,14 @@ export default function PaymentForm({ booking, onPaymentSuccess }: PaymentFormPr
         <Button
           onClick={handleCreateIntent}
           isLoading={isProcessing}
+          disabled={gatewayDown}
           fullWidth
           size="lg"
           leftIcon={<FiExternalLink />}
         >
-          Pay {formatCurrency(booking.total_price)}
+          {gatewayDown
+            ? 'Payments unavailable'
+            : `Pay ${formatCurrency(booking.total_price)}`}
         </Button>
       )}
 
